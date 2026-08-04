@@ -298,6 +298,11 @@ class Experiment:
         with open(json_path, "r") as f:
             self.params = json.load(f)
 
+        # Keys beginning with '_' are documentation, not hyperparameters. Without
+        # this they would be swept like everything else: a 10-line "_comment"
+        # array silently multiplies the run count by ten.
+        self.params = {k: v for k, v in self.params.items() if not k.startswith('_')}
+
         # Separate keys and value lists
         keys = list(self.params.keys())
         values = [v if isinstance(v, list) else [v] for v in self.params.values()]

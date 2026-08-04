@@ -1,6 +1,21 @@
 {
+  "_comment": [
+    "Real-hardware training run. Matches the Physical Atari paper's Table 2,",
+    "except steps=648000 (= 6.0 h at 30 fps, the section 5.2 experiment).",
+    "",
+    "ring_size is set explicitly for a 24 GB GPU. The agent's built-in default",
+    "is 400,000, which allocates 400000*3*128*128 = 18.31 GiB ON THE TRAINING",
+    "DEVICE and will OOM an RTX 4090 once model, activations, optimizer state,",
+    "and the CUDA context are added. 200,000 costs 9.16 GiB and holds 1.85 h of",
+    "experience instead of 3.70 h. That is a real algorithmic difference from the",
+    "paper (less replay diversity), so note it when comparing results.",
+    "On a card with more memory, raise it back toward 400000."
+  ],
   "exp_name": [
     "action_input_sweep"
+  ],
+  "ring_size": [
+    200000
   ],
   "checkpoint_dir": [
     "./checkpoints"
