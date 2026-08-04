@@ -1,0 +1,27 @@
+# Build output
+build/
+*.o
+*.a
+*.so
+
+# Atari ROMs — not distributable; regenerate with ale-py, see devbox_code/README.md
+games/
+*.bin
+
+# Dear ImGui window-layout state, written at runtime
+imgui.ini
+
+# PhysicalALE run results and frame dumps
+*.bmp
+devbox_code/*.json
+
+# Training checkpoints
+checkpoints/
+
+# Local robot calibration (copy of robotroller.default.json)
+agent_code/physical_atari_configs/physical_atari_sample_config.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/

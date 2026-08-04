@@ -23,10 +23,38 @@ find_package(SDL2 REQUIRED COMPONENTS SDL2)
 find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(GPIOD REQUIRED libgpiod)
 
-if(GPIOD_VERSION VERSION_LESS "2.0")
-    message(FATAL_ERROR "libgpiod >= 2.0 required (found ${GPIOD_VERSION})")
+# libgpiod is only needed for the original Raspberry Pi devbox, which reads the
+# CX40 switches straight off the GPIO header. On any other host the switches
+# arrive over serial from an MCU instead (--input=serial), so GPIO support is
+# optional: we compile it in when a suitable libgpiod is present and quietly
+# leave it out otherwise. Force either way with -DDEVBOX_USE_GPIOD=ON/OFF.
+# Tri-state (AUTO/ON/OFF), so it must be a STRING cache entry rather than an
+# option() — option() is a BOOL and would silently coerce AUTO to OFF.
+set(DEVBOX_USE_GPIOD "AUTO" CACHE STRING
+    "Build the Raspberry Pi GPIO joystick input path (AUTO/ON/OFF)")
+set_property(CACHE DEVBOX_USE_GPIOD PROPERTY STRINGS AUTO ON OFF)
+
+if(DEVBOX_USE_GPIOD STREQUAL "AUTO")
+    pkg_check_modules(GPIOD QUIET libgpiod)
+    if(GPIOD_FOUND AND NOT GPIOD_VERSION VERSION_LESS "2.0")
+        set(DEVBOX_USE_GPIOD ON)
+        message(STATUS "libgpiod ${GPIOD_VERSION} found - enabling GPIO input")
+    else()
+        set(DEVBOX_USE_GPIOD OFF)
+        if(GPIOD_FOUND)
+            message(STATUS "libgpiod ${GPIOD_VERSION} found but >= 2.0 required "
+                           "- GPIO input disabled (use --input=serial)")
+        else()
+            message(STATUS "libgpiod not found - GPIO input disabled "
+                           "(use --input=serial)")
+        endif()
+    endif()
+elseif(DEVBOX_USE_GPIOD)
+    pkg_check_modules(GPIOD REQUIRED libgpiod)
+    if(GPIOD_VERSION VERSION_LESS "2.0")
+        message(FATAL_ERROR "libgpiod >= 2.0 required (found ${GPIOD_VERSION})")
+    endif()
 endif()
 
 include_directories(${SDL2_INCLUDE_DIRS})
@@ -41,13 +69,18 @@ set(IMGUI
 )
 
 
-add_executable(PhysicalALE main.cpp ${IMGUI} include/json.hpp)
+add_executable(PhysicalALE main.cpp ${IMGUI} include/json.hpp include/joystick_input.h)
 add_subdirectory(src)
 
-target_include_directories(PhysicalALE PRIVATE ${GPIOD_INCLUDE_DIRS})
 target_link_libraries(PhysicalALE PRIVATE SDL2::SDL2
         Threads::Threads ${OpenCV_LIBS}
-        ZLIB::ZLIB Threads::Threads pthread ${GPIOD_LIBRARIES} Atari)
+        ZLIB::ZLIB Threads::Threads pthread Atari)
+
+if(DEVBOX_USE_GPIOD)
+    target_compile_definitions(PhysicalALE PRIVATE DEVBOX_HAVE_GPIOD)
+    target_include_directories(PhysicalALE PRIVATE ${GPIOD_INCLUDE_DIRS})
+    target_link_libraries(PhysicalALE PRIVATE ${GPIOD_LIBRARIES})
+endif()
 
 # Install the binary to /usr/local/bin
 install(TARGETS PhysicalALE

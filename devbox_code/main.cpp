@@ -26,11 +26,12 @@
 #include <cstring>
 #include <unordered_map>
 
-#include <gpiod.h>
 #include <SDL2/SDL.h>
 #include <mutex>
+#include <memory>
 #include "src/atari/ale_interface.hpp"
 #include "include/json.hpp"
+#include "include/joystick_input.h"
 
 
 // Screen Settings
@@ -64,72 +65,30 @@ std::string game_name_global;
 std::chrono::system_clock::time_point start_timestamp;
 bool shutdown_requested = false;
 
-static gpiod_line_request* request_input_lines(const char* chip_path,
-                                               const unsigned int* offsets,
-                                               size_t num_lines,
-                                               const char* consumer)
+// Usage text for the command line.
+static void print_usage(const char* argv0)
 {
-    gpiod_chip* chip = gpiod_chip_open(chip_path);
-    if (!chip)
-        return nullptr;
-
-    gpiod_line_settings* settings = gpiod_line_settings_new();
-    if (!settings)
-    {
-        gpiod_chip_close(chip);
-        return nullptr;
-    }
-
-    gpiod_line_settings_set_direction(settings, GPIOD_LINE_DIRECTION_INPUT);
-    gpiod_line_settings_set_bias(settings, GPIOD_LINE_BIAS_PULL_UP);
-
-    gpiod_line_config* line_cfg = gpiod_line_config_new();
-    if (!line_cfg)
-    {
-        gpiod_line_settings_free(settings);
-        gpiod_chip_close(chip);
-        return nullptr;
-    }
-
-    for (size_t i = 0; i < num_lines; ++i)
-    {
-        if (gpiod_line_config_add_line_settings(line_cfg, &offsets[i], 1, settings) < 0)
-        {
-            gpiod_line_config_free(line_cfg);
-            gpiod_line_settings_free(settings);
-            gpiod_chip_close(chip);
-            return nullptr;
-        }
-    }
-
-    gpiod_request_config* req_cfg = nullptr;
-    if (consumer)
-    {
-        req_cfg = gpiod_request_config_new();
-        if (!req_cfg)
-        {
-            gpiod_line_config_free(line_cfg);
-            gpiod_line_settings_free(settings);
-            gpiod_chip_close(chip);
-            return nullptr;
-        }
-        gpiod_request_config_set_consumer(req_cfg, consumer);
-    }
-
-    gpiod_line_request* request = gpiod_chip_request_lines(chip, req_cfg, line_cfg);
-
-    gpiod_request_config_free(req_cfg);
-    gpiod_line_config_free(line_cfg);
-    gpiod_line_settings_free(settings);
-    gpiod_chip_close(chip);
-
-    return request;
-}
-
-static int gpio_pressed(gpiod_line_request* request, unsigned int offset)
-{
-    enum gpiod_line_value value = gpiod_line_request_get_value(request, offset);
-    return value == GPIOD_LINE_VALUE_ACTIVE ? 0 : 1;
+    std::cerr
+        << "Usage: " << argv0 << " <RomDirectory> <game_name> [results_filename] [options]\n"
+        << "\n"
+        << "Options:\n"
+        << "  --input=serial[:DEV]  read the CX40 switches from an MCU over USB CDC\n"
+        << "                        (default device /dev/ttyUSB0)\n"
+        << "  --input=keyboard      arrow keys + space; no robot hardware needed\n"
+#ifdef DEVBOX_HAVE_GPIOD
+        << "  --input=gpio[:CHIP]   read the switches directly on Raspberry Pi GPIO\n"
+        << "                        (default chip /dev/gpiochip0)\n"
+#endif
+        << "  --baud=N              serial baud rate (default 115200)\n"
+        << "  --frac=F              render scale; design is 1280x720, so F=1.5\n"
+        << "                        exactly fills a 1920x1080 screen.\n"
+        << "                        'auto' (default) fits the current display.\n"
+        << "  --windowed            run in a window instead of fullscreen\n"
+        << "  --dump-frame=PATH     save one rendered frame to PATH (.bmp) and exit.\n"
+        << "                        Use this to verify the AprilTags and game crop\n"
+        << "                        without needing the camera.\n"
+        << "  --dump-after=N        step N frames before dumping (default 60)\n"
+        << std::endl;
 }
 
 // Signal handler for graceful shutdown
@@ -236,40 +195,85 @@ int main(int argc, char** argv)
     // Record start timestamp
     start_timestamp = std::chrono::system_clock::now();
     
-    float frac = 0.625f;
+    // frac scales the whole 1280x720 design layout to the physical panel. The
+    // Pi devbox used 0.625 to fit its 800x480 display. Everything (game rect,
+    // corner tags, reward tags) is scaled by it uniformly, and the agent's
+    // homography maps the detected corner tags back into design space — so
+    // changing frac is safe end to end and simply buys the camera more pixels.
+    // -1 means "fit the current display", resolved after SDL_Init below.
+    float frac = -1.0f;
 
-    // Get RomDirectory from command line arguments
-    if (argc < 2)
+    std::string input_spec = "serial";
+    int serial_baud = 115200;
+    bool windowed = false;
+    std::string dump_frame_path;
+    int dump_after_steps = 60;
+
+    // Positional: <RomDirectory> <game_name> [results_filename]
+    // Anything starting with "--" is an option and may appear anywhere after.
+    std::vector<std::string> positional;
+    for (int i = 1; i < argc; ++i)
     {
-        std::cerr << "Error: RomDirectory required as first command line argument" << std::endl;
-        std::cerr << "Usage: " << argv[0] << " <RomDirectory> <game_name> [results_filename]" << std::endl;
+        std::string arg = argv[i];
+        if (arg.rfind("--", 0) != 0)
+        {
+            positional.push_back(arg);
+            continue;
+        }
+
+        if (arg == "--help" || arg == "-h")
+        {
+            print_usage(argv[0]);
+            return 0;
+        }
+        else if (arg.rfind("--input=", 0) == 0)
+        {
+            input_spec = arg.substr(8);
+        }
+        else if (arg.rfind("--baud=", 0) == 0)
+        {
+            serial_baud = std::atoi(arg.substr(7).c_str());
+        }
+        else if (arg.rfind("--frac=", 0) == 0)
+        {
+            std::string v = arg.substr(7);
+            frac = (v == "auto") ? -1.0f : std::atof(v.c_str());
+        }
+        else if (arg == "--windowed")
+        {
+            windowed = true;
+        }
+        else if (arg.rfind("--dump-frame=", 0) == 0)
+        {
+            dump_frame_path = arg.substr(13);
+        }
+        else if (arg.rfind("--dump-after=", 0) == 0)
+        {
+            dump_after_steps = std::atoi(arg.substr(13).c_str());
+        }
+        else
+        {
+            std::cerr << "Error: unknown option '" << arg << "'" << std::endl;
+            print_usage(argv[0]);
+            return 1;
+        }
+    }
+
+    if (positional.size() < 2)
+    {
+        std::cerr << "Error: RomDirectory and game_name are required" << std::endl;
+        print_usage(argv[0]);
         return 1;
     }
-    std::string directory = argv[1];
+
+    std::string directory = positional[0];
+    std::string game_name = positional[1];
+    game_name_global = game_name;
+    experiment_name = (positional.size() >= 3) ? positional[2] : "";
 
     std::unordered_map<std::string, bool> to_render_flags_map;
     to_render_flags_map["corner_tags"] = true;
 
-    // Get game name and experiment name from command line arguments
-    if (argc < 3)
-    {
-        std::cerr << "Error: Game name required as command line argument" << std::endl;
-        std::cerr << "Usage: " << argv[0] << " <RomDirectory> <game_name> [results_filename]" << std::endl;
-        return 1;
-    }
-    std::string game_name = argv[2];
-    game_name_global = game_name;
-    
-    // Get experiment name (optional)
-    if (argc >= 4)
-    {
-        experiment_name = argv[3];
-    }
-    else
-    {
-        experiment_name = "";
-    }
-    
     std::cout << "Game: " << game_name << ", Experiment: " << experiment_name << std::endl;
 
     // Register signal handler for graceful shutdown
@@ -295,10 +299,29 @@ int main(int argc, char** argv)
     SDL_DisplayMode DM;
     SDL_GetCurrentDisplayMode(0, &DM);
 
+    // Resolve "auto": scale the 1280x720 design as large as the display allows
+    // without cropping. A 1920x1080 panel gives exactly 1.5.
+    if (frac <= 0.0f)
+    {
+        const float fit_w = static_cast<float>(DM.w) / static_cast<float>(screen_width);
+        const float fit_h = static_cast<float>(DM.h) / static_cast<float>(screen_height);
+        frac = (fit_w < fit_h) ? fit_w : fit_h;
+        std::cout << "[devbox] display " << DM.w << "x" << DM.h << " -> auto frac " << frac << std::endl;
+    }
+    const int content_w = static_cast<int>(screen_width * frac);
+    const int content_h = static_cast<int>(screen_height * frac);
+    std::cout << "[devbox] rendering " << content_w << "x" << content_h
+              << " (frac " << frac << ")" << std::endl;
+
+    // Fullscreen-desktop keeps the current video mode (no mode switch, which is
+    // both faster to start and far friendlier under Wayland/XWayland).
     auto window_flags = static_cast<SDL_WindowFlags>(
-        SDL_WINDOW_FULLSCREEN);
+        windowed ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
     window = SDL_CreateWindow("Atari 2600", SDL_WINDOWPOS_CENTERED,
-                              SDL_WINDOWPOS_CENTERED, screen_width, screen_height, window_flags);
+                              SDL_WINDOWPOS_CENTERED,
+                              windowed ? content_w : screen_width,
+                              windowed ? content_h : screen_height,
+                              window_flags);
 
     renderer = SDL_CreateRenderer(
         window, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_ACCELERATED);
@@ -386,16 +409,56 @@ int main(int argc, char** argv)
     bool show_fps = false;
 
 
-    std::cout << gpiod_api_version() << std::endl;
-    static const unsigned int gpio_offsets[] = {17, 27, 22, 24, 23};
-    gpiod_line_request* gpio_request = request_input_lines(
-        "/dev/gpiochip0", gpio_offsets, sizeof(gpio_offsets) / sizeof(gpio_offsets[0]),
-        "PhysicalAtariEnvironment");
-    if (!gpio_request)
+    // Build the joystick input source from --input=...
+    std::unique_ptr<InputSource> input;
     {
-        std::cerr << "Failed to request GPIO lines: " << strerror(errno) << std::endl;
-        return 1;
+        std::string kind = input_spec;
+        std::string target;
+        const size_t colon = input_spec.find(':');
+        if (colon != std::string::npos)
+        {
+            kind = input_spec.substr(0, colon);
+            target = input_spec.substr(colon + 1);
+        }
+
+        if (kind == "keyboard")
+        {
+            input = std::make_unique<KeyboardInput>();
+            std::cout << "[devbox] input: keyboard (arrows + space)" << std::endl;
+        }
+        else if (kind == "serial")
+        {
+            auto serial = std::make_unique<SerialInput>();
+            if (!serial->open_port(target.empty() ? "/dev/ttyUSB0" : target, serial_baud))
+            {
+                std::cerr << "Failed to open the joystick serial port. Pass "
+                             "--input=serial:/dev/ttyACM0 (or similar), or "
+                             "--input=keyboard to run without robot hardware."
+                          << std::endl;
+                return 1;
+            }
+            input = std::move(serial);
+        }
+#ifdef DEVBOX_HAVE_GPIOD
+        else if (kind == "gpio")
+        {
+            auto gpio = std::make_unique<GpioInput>();
+            if (!gpio->open_chip(target.empty() ? "/dev/gpiochip0" : target.c_str()))
+            {
+                std::cerr << "Failed to request GPIO lines." << std::endl;
+                return 1;
+            }
+            input = std::move(gpio);
+        }
+#endif
+        else
+        {
+            std::cerr << "Error: unknown input source '" << kind << "'" << std::endl;
+            print_usage(argv[0]);
+            return 1;
+        }
     }
+    ButtonState buttons;
 
     while (!done)
     {
@@ -409,11 +472,17 @@ int main(int argc, char** argv)
         }
         m.unlock();
         
-        int up = gpio_pressed(gpio_request, 17);
-        int down = gpio_pressed(gpio_request, 27);
-        int left = gpio_pressed(gpio_request, 22);
-        int right = gpio_pressed(gpio_request, 24);
-        int fire = gpio_pressed(gpio_request, 23);
+        // Read the CX40 switches. Deliberately done immediately before
+        // env->act() below so the emulator always steps on the freshest input.
+        // (The keyboard source reads SDL's cached key state, which is refreshed
+        // by the SDL_PollEvent loop further down — so it lags by at most one
+        // frame. That path is for bring-up only, not for robot runs.)
+        input->poll(buttons);
+        const int up = buttons.up;
+        const int down = buttons.down;
+        const int left = buttons.left;
+        const int right = buttons.right;
+        const int fire = buttons.fire;
 
         if (up == 0 && right == 0 && left == 0 && fire == 0 && down == 0) current_action = ale::PLAYER_A_NOOP;
         else if (up == 1 && right == 0 && left == 0 && fire == 0 && down == 0) current_action = ale::PLAYER_A_UP;
@@ -567,13 +636,13 @@ int main(int argc, char** argv)
             SDL_RenderCopy(renderer, aprilTagTextures[0], nullptr, &dst);
 
             dst = {
-                screen_width * frac - (int(frac * size_april_tag)), 0, int(frac * size_april_tag),
+                int(screen_width * frac) - int(frac * size_april_tag), 0, int(frac * size_april_tag),
                 int(frac * size_april_tag)
             };
             SDL_RenderCopy(renderer, aprilTagTextures[1], nullptr, &dst);
 
             dst = {
-                screen_width * frac - int(frac * size_april_tag), int((screen_height - size_april_tag) * frac),
+                int(screen_width * frac) - int(frac * size_april_tag), int((screen_height - size_april_tag) * frac),
                 int(frac * size_april_tag), int(frac * size_april_tag)
             };
             SDL_RenderCopy(renderer, aprilTagTextures[3], nullptr, &dst);
@@ -614,6 +683,35 @@ int main(int argc, char** argv)
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
 
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData());
+
+        // Optional single-frame capture. Read the back buffer *before* present:
+        // afterwards its contents are undefined. Lets you confirm the tag layout
+        // and game crop offline, with no camera and no agent machine.
+        if (!dump_frame_path.empty() && step_counter >= dump_after_steps)
+        {
+            int out_w = 0, out_h = 0;
+            SDL_GetRendererOutputSize(renderer, &out_w, &out_h);
+            SDL_Surface* shot =
+                SDL_CreateRGBSurfaceWithFormat(0, out_w, out_h, 32, SDL_PIXELFORMAT_ARGB8888);
+            if (shot != nullptr &&
+                SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, shot->pixels,
+                                     shot->pitch) == 0 &&
+                SDL_SaveBMP(shot, dump_frame_path.c_str()) == 0)
+            {
+                std::cout << "[devbox] wrote frame dump " << dump_frame_path << " (" << out_w << "x"
+                          << out_h << ")" << std::endl;
+            }
+            else
+            {
+                std::cerr << "[devbox] frame dump failed: " << SDL_GetError() << std::endl;
+            }
+            if (shot != nullptr)
+            {
+                SDL_FreeSurface(shot);
+            }
+            done = true;
+        }
+
         SDL_RenderPresent(renderer);
         auto current_time = std::chrono::system_clock::now();
         std::chrono::duration<double> elapsed_seconds =
@@ -629,7 +727,7 @@ int main(int argc, char** argv)
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
-    gpiod_line_request_release(gpio_request);
+    input.reset(); // closes the serial port / releases GPIO lines
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
