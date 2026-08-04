@@ -28,6 +28,7 @@
 
 #include <SDL2/SDL.h>
 #include <mutex>
+#include <thread>
 #include <memory>
 #include "src/atari/ale_interface.hpp"
 #include "include/json.hpp"
@@ -88,6 +89,9 @@ static void print_usage(const char* argv0)
         << "                        Use this to verify the AprilTags and game crop\n"
         << "                        without needing the camera.\n"
         << "  --dump-after=N        step N frames before dumping (default 60)\n"
+        << "  --fps=N               cap the emulator at N frames/sec (default 60,\n"
+        << "                        the Atari's native rate). 0 = rely on vsync only,\n"
+        << "                        which runs the game at the display's refresh rate.\n"
         << std::endl;
 }
 
@@ -208,6 +212,12 @@ int main(int argc, char** argv)
     bool windowed = false;
     std::string dump_frame_path;
     int dump_after_steps = 60;
+    // The Atari runs at 60 Hz. Upstream relied solely on SDL's vsync to pace
+    // the loop, which is safe on the Raspberry Pi devbox's fixed 60 Hz panel
+    // but not on a laptop: dock it to a 144 Hz monitor and the emulator --
+    // and therefore the game, the reward rate, and every latency figure --
+    // runs 2.4x too fast, silently. Cap it explicitly. 0 = vsync only.
+    int target_fps = 60;
 
     // Positional: <RomDirectory> <game_name> [results_filename]
     // Anything starting with "--" is an option and may appear anywhere after.
@@ -250,6 +260,10 @@ int main(int argc, char** argv)
         else if (arg.rfind("--dump-after=", 0) == 0)
         {
             dump_after_steps = std::atoi(arg.substr(13).c_str());
+        }
+        else if (arg.rfind("--fps=", 0) == 0)
+        {
+            target_fps = std::atoi(arg.substr(6).c_str());
         }
         else
         {
@@ -401,6 +415,7 @@ int main(int argc, char** argv)
 
 
     auto old_time = std::chrono::system_clock::now();
+    auto next_frame_deadline = std::chrono::steady_clock::now();
 
     int step_counter = 0;
     int last_nonzero_reward_tag = 10;  // Starts at tag 10 (init condition)
@@ -713,6 +728,25 @@ int main(int argc, char** argv)
         }
 
         SDL_RenderPresent(renderer);
+
+        // Hold the emulator to its native rate regardless of what the display
+        // is doing. Advancing the deadline by a fixed step (rather than from
+        // "now") keeps the average exact; if we fall behind, reset to now so a
+        // hiccup does not build up a debt that then runs the game fast.
+        if (target_fps > 0)
+        {
+            next_frame_deadline += std::chrono::microseconds(1000000 / target_fps);
+            const auto now = std::chrono::steady_clock::now();
+            if (next_frame_deadline > now)
+            {
+                std::this_thread::sleep_until(next_frame_deadline);
+            }
+            else
+            {
+                next_frame_deadline = now;
+            }
+        }
+
         auto current_time = std::chrono::system_clock::now();
         std::chrono::duration<double> elapsed_seconds =
             current_time - old_time;
