@@ -89,12 +89,27 @@ class RealEnv:
         camera_brightness = config["camera"].get("brightness", 128)
         camera_contrast = config["camera"].get("contrast", 128)
 
-        # Extract robot configuration
+        # Extract robot configuration.
+        #
+        # NOTE: these servos are Feetech STS3215, not the Dynamixel XC-330 used
+        # in the paper. The PID values here are Feetech's 1-byte EEPROM
+        # coefficients (0-254), NOT Dynamixel's 2-byte RAM registers -- the
+        # paper's P=1500/I=6000/D=1500 are meaningless on this hardware. A
+        # negative value leaves whatever is programmed in the servo alone.
         serial_port = config["robot"]["serial_port"]
         position_d_gain = config["robot"]["D_gain"]
         position_i_gain = config["robot"]["I_gain"]
         position_p_gain = config["robot"]["P_gain"]
         baud_rate = config["robot"]["baud_rate"]
+
+        # Motion profile and safety. goal_speed is steps/s, goal_acc is in units
+        # of 100 steps/s^2, torque_limit is 0-1000, and overcurrent_counts is
+        # the high-current reflex threshold in RAW CURRENT COUNTS (~6.5 mA each
+        # on an STS3215) -- not milliamps.
+        goal_speed = config["robot"].get("goal_speed", 600)
+        goal_acc = config["robot"].get("goal_acc", 20)
+        torque_limit = config["robot"].get("torque_limit", 500)
+        overcurrent_counts = config["robot"].get("overcurrent_counts", 185)
         
         # Extract servo position configuration
         dpad_servo_default = config["robot"]["dpad_servo_default"]
@@ -147,7 +162,11 @@ class RealEnv:
             dpad_servo_up,
             dpad_servo_down,
             button_servo_default,
-            button_deflection
+            button_deflection,
+            goal_speed,
+            goal_acc,
+            torque_limit,
+            overcurrent_counts
         )
         
         # Cache for last step results

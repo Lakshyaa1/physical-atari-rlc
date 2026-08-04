@@ -105,7 +105,16 @@ public:
         int dpad_servo_up,
         int dpad_servo_down,
         int button_servo_default,
-        int button_deflection
+        int button_deflection,
+        // Feetech-specific motion profile and safety. See robotroller.h.
+        // goal_speed: steps/s; goal_acc: units of 100 steps/s^2
+        // torque_limit: 0-1000 (~0.1% each), SRAM
+        // overcurrent_counts: high-current reflex threshold in RAW CURRENT
+        //   COUNTS (~6.5 mA each on an STS3215), not milliamps
+        int goal_speed,
+        int goal_acc,
+        int torque_limit,
+        int overcurrent_counts
     );
     
     // Destructor

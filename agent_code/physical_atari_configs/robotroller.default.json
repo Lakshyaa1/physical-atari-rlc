@@ -1,4 +1,26 @@
 {
+  "_comment": [
+    "Per-robot calibration for a Feetech STS3215 Robotroller.",
+    "COPY THIS FILE before editing; do not calibrate the default in place.",
+    "",
+    "Every servo value below is specific to one physical build. The values from",
+    "the Physical Atari paper are for Dynamixel XC-330 servos on a different",
+    "robot and DO NOT transfer -- neither the encoder positions nor the PID",
+    "gains. Calibrate your own; see PORTING_PLAN.md section 7.",
+    "",
+    "PID: Feetech coefficients are 1-byte EEPROM values (0-254), unlike",
+    "Dynamixel's 2-byte RAM registers. The paper's 1500/6000/1500 are not",
+    "expressible here. Use -1 to leave a servo's programmed value untouched.",
+    "STS3215 factory defaults are around P=32, I=0, D=0. Start conservative:",
+    "raise P until the joystick reaches its target briskly without buzzing or",
+    "overshoot, and keep motion gentle -- the paper traced controller wear to an",
+    "over-aggressive motion profile.",
+    "",
+    "overcurrent_counts: high-current reflex threshold in RAW CURRENT COUNTS",
+    "(~6.5 mA per count on an STS3215), NOT milliamps. 185 counts ~= 1200 mA,",
+    "the paper's figure, but calibrate it: stall a servo by hand and read the",
+    "reported value, then set the threshold comfortably below it."
+  ],
   "camera": {
     "device": "/dev/video0",
     "target_fps": 60,
@@ -12,18 +34,25 @@
     "contrast": 128
   },
   "robot": {
-    "serial_port": "/dev/serial/by-id/usb-1a86_USB_Single_Serial_58FA082095-if00",
+    "serial_port": "/dev/serial/by-id/CHANGE-ME-see-ls-/dev/serial/by-id/",
     "baud_rate": 1000000,
-    "D_gain": 0,
+
+    "P_gain": 32,
     "I_gain": 0,
-    "P_gain": 4500,
-    "dpad_servo_default": 2030,
-    "dpad_servo_right": 2105,
-    "dpad_servo_left": 1905,
-    "dpad_servo_up": 2130,
-    "dpad_servo_down": 1925,
+    "D_gain": 0,
+
+    "goal_speed": 600,
+    "goal_acc": 20,
+    "torque_limit": 500,
+    "overcurrent_counts": 185,
+
+    "dpad_servo_default": 2048,
+    "dpad_servo_right": 2130,
+    "dpad_servo_left": 1925,
+    "dpad_servo_up": 2180,
+    "dpad_servo_down": 1960,
     "button_servo_default": 2000,
-    "button_deflection": 1940
+    "button_deflection": 1932
   },
   "transformation": {
     "output_width": 1280,

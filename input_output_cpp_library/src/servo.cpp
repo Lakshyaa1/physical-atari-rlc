@@ -14,119 +14,183 @@
 
 #include "../include/servo.h"
 
-Servo::~Servo()
-{
-    std::cout << "Destructor called for servo " << this->id << "\n";
-    this->disableTorque();
-}
+#include <algorithm>
+#include <iostream>
 
-void Servo::setPosition(int position)
+Servo::Servo(int id, SMS_STS* bus) : id_(id), bus_(bus) {}
+
+bool Servo::writeEepromByteIfChanged(int addr, int value, const char* what)
 {
-    uint8_t dxl_error = 0;
-    auto dxl_comm_result = pck_handler_->write4ByteTxRx(portHandler, this->id, ADDR_GOAL_POSITION,
-                                                        position, &dxl_error);
-    if (!Servo::logDynamixelErrors(pck_handler_, dxl_comm_result, dxl_error))
+    // EEPROM cells wear out. The gains and mode are written on every startup,
+    // so read first and skip the write when nothing would change -- otherwise a
+    // few thousand restarts would burn through the cell's erase budget for no
+    // reason at all.
+    const int current = bus_->readByte(static_cast<u8>(id_), static_cast<u8>(addr));
+    if (current == value)
     {
-        std::cout << "Failed to set position of servo " << this->id << "\n";
+        return true;
     }
-}
-
-void Servo::setPositionDGain(int d_gain)
-{
-    uint8_t dxl_error = 0;
-    auto dxl_comm_result = pck_handler_->write2ByteTxRx(portHandler, this->id, ADDR_POSITION_D_GAIN,
-                                                        d_gain, &dxl_error);
-    if (!Servo::logDynamixelErrors(pck_handler_, dxl_comm_result, dxl_error))
+    if (current < 0)
     {
-        std::cout << "Failed to set Position D Gain of servo " << this->id << "\n";
-    }
-}
-
-void Servo::setPositionIGain(int i_gain)
-{
-    uint8_t dxl_error = 0;
-    auto dxl_comm_result = pck_handler_->write2ByteTxRx(portHandler, this->id, ADDR_POSITION_I_GAIN,
-                                                        i_gain, &dxl_error);
-    if (!Servo::logDynamixelErrors(pck_handler_, dxl_comm_result, dxl_error))
-    {
-        std::cout << "Failed to set Position I Gain of servo " << this->id << "\n";
-    }
-}
-
-void Servo::setPositionPGain(int p_gain)
-{
-    uint8_t dxl_error = 0;
-    auto dxl_comm_result = pck_handler_->write2ByteTxRx(portHandler, this->id, ADDR_POSITION_P_GAIN,
-                                                        p_gain, &dxl_error);
-    if (!Servo::logDynamixelErrors(pck_handler_, dxl_comm_result, dxl_error))
-    {
-        std::cout << "Failed to set Position P Gain of servo " << this->id << "\n";
-    }
-}
-
-int16_t Servo::getPresentCurrent()
-{
-    uint16_t current = 0;
-    uint8_t dxl_error = 0;
-    auto dxl_comm_result = pck_handler_->read2ByteTxRx(portHandler, this->id, ADDR_PRESENT_CURRENT,
-                                                       &current, &dxl_error);
-
-    Servo::logDynamixelErrors(pck_handler_, dxl_comm_result, dxl_error);
-    return static_cast<int16_t>(current);
-}
-
-int Servo::getPresentPosition()
-{
-    uint32_t position = 0;
-    uint8_t dxl_error = 0;
-    auto dxl_comm_result = pck_handler_->read4ByteTxRx(portHandler, this->id, ADDR_PRESENT_POSITION,
-                                                       &position, &dxl_error);
-
-    Servo::logDynamixelErrors(pck_handler_, dxl_comm_result, dxl_error);
-    return static_cast<int>(position);
-}
-
-
-bool Servo::logDynamixelErrors(
-    dynamixel::PacketHandler* packetHandler,
-    const int& dxl_comm_result, const uint8_t& dxl_error)
-{
-    if (dxl_comm_result != COMM_SUCCESS)
-    {
-        printf("%s\n", packetHandler->getTxRxResult(dxl_comm_result));
+        std::cerr << "[Servo " << id_ << "] could not read " << what << " (addr " << addr
+                  << ") - is the servo powered and on the bus?" << std::endl;
         return false;
     }
-    else if (dxl_error != 0)
+
+    if (bus_->unLockEeprom(static_cast<u8>(id_)) != 1)
     {
-        printf("%s\n", packetHandler->getRxPacketError(dxl_error));
+        std::cerr << "[Servo " << id_ << "] failed to unlock EEPROM to set " << what << std::endl;
+        return false;
+    }
+
+    const int rc = bus_->writeByte(static_cast<u8>(id_), static_cast<u8>(addr),
+                                   static_cast<u8>(value));
+
+    // Re-lock even if the write failed: leaving EEPROM writable invites silent
+    // corruption from any later stray packet on a shared bus.
+    const int locked = bus_->LockEeprom(static_cast<u8>(id_));
+
+    if (rc != 1)
+    {
+        std::cerr << "[Servo " << id_ << "] failed to write " << what << " = " << value << std::endl;
+        return false;
+    }
+    if (locked != 1)
+    {
+        std::cerr << "[Servo " << id_ << "] WARNING: EEPROM left unlocked after setting " << what
+                  << std::endl;
+    }
+
+    std::cout << "[Servo " << id_ << "] " << what << ": " << current << " -> " << value
+              << " (EEPROM)" << std::endl;
+    return true;
+}
+
+bool Servo::setModeToPosition()
+{
+    return writeEepromByteIfChanged(ADDR_SERVO_MODE, FEETECH_MODE_POSITION, "operating mode");
+}
+
+bool Servo::setPositionPGain(int gain)
+{
+    if (gain < 0)
+    {
+        return true; // leave whatever is programmed
+    }
+    if (gain > FEETECH_MAX_PID_COEF)
+    {
+        std::cerr << "[Servo " << id_ << "] P gain " << gain << " exceeds the 1-byte maximum "
+                  << FEETECH_MAX_PID_COEF
+                  << ". Feetech coefficients are NOT on the same scale as Dynamixel's - "
+                     "the Physical Atari paper's values (1500/6000/1500) do not apply here."
+                  << std::endl;
+        return false;
+    }
+    return writeEepromByteIfChanged(ADDR_MODE0_P_COEF, gain, "P coefficient");
+}
+
+bool Servo::setPositionIGain(int gain)
+{
+    if (gain < 0)
+    {
+        return true;
+    }
+    if (gain > FEETECH_MAX_PID_COEF)
+    {
+        std::cerr << "[Servo " << id_ << "] I gain " << gain << " exceeds the 1-byte maximum "
+                  << FEETECH_MAX_PID_COEF << std::endl;
+        return false;
+    }
+    return writeEepromByteIfChanged(ADDR_MODE0_I_COEF, gain, "I coefficient");
+}
+
+bool Servo::setPositionDGain(int gain)
+{
+    if (gain < 0)
+    {
+        return true;
+    }
+    if (gain > FEETECH_MAX_PID_COEF)
+    {
+        std::cerr << "[Servo " << id_ << "] D gain " << gain << " exceeds the 1-byte maximum "
+                  << FEETECH_MAX_PID_COEF << std::endl;
+        return false;
+    }
+    return writeEepromByteIfChanged(ADDR_MODE0_D_COEF, gain, "D coefficient");
+}
+
+bool Servo::setTorqueLimit(int limit)
+{
+    if (limit < 0)
+    {
+        return true;
+    }
+    limit = std::min(limit, FEETECH_MAX_TORQUE_LIMIT);
+    // SRAM, not EEPROM - safe to write unconditionally on every startup.
+    if (bus_->writeWord(static_cast<u8>(id_), ADDR_TORQUE_LIMIT, static_cast<u16>(limit)) != 1)
+    {
+        std::cerr << "[Servo " << id_ << "] failed to set torque limit" << std::endl;
         return false;
     }
     return true;
 }
 
-
-Servo::Servo(int id, dynamixel::PortHandler* portHandler, dynamixel::PacketHandler* packetHandler)
+bool Servo::setPosition(int position, int speed, int acc)
 {
-    this->portHandler = portHandler;
-    this->pck_handler_ = packetHandler;
-    this->id = id;
+    return bus_->WritePosEx(static_cast<u8>(id_), static_cast<s16>(position),
+                            static_cast<u16>(speed), static_cast<u8>(acc)) == 1;
 }
 
-void Servo::disableTorque()
+bool Servo::enableTorque()
 {
-    uint8_t dxl_error = 0;
-    pck_handler_->write1ByteTxRx(portHandler, this->id, ADDR_TORQUE_ENABLE, 0, &dxl_error);
+    return bus_->EnableTorque(static_cast<u8>(id_), 1) == 1;
 }
 
-void Servo::enableTorque()
+bool Servo::disableTorque()
 {
-    uint8_t dxl_error = 0;
-    pck_handler_->write1ByteTxRx(portHandler, this->id, ADDR_TORQUE_ENABLE, 1, &dxl_error);
+    return bus_->EnableTorque(static_cast<u8>(id_), 0) == 1;
 }
 
-
-void Servo::setModeToPosition()
+int Servo::getPresentPosition()
 {
-    uint8_t dxl_error = 0;
-    pck_handler_->write1ByteTxRx(portHandler, this->id, ADDR_OPERATING_MODE, 3, &dxl_error);
+    return bus_->ReadPos(id_);
+}
+
+int Servo::getPresentCurrent()
+{
+    return bus_->ReadCurrent(id_);
+}
+
+bool Servo::refreshTelemetry()
+{
+    // FeedBack() returns 1 on success and 0 on failure (NOT -1 -- several other
+    // calls in this SDK use -1, so this is easy to get wrong). Getting it wrong
+    // matters: on a failed read the cache still holds the PREVIOUS servo's
+    // values, and the overcurrent reflex would then be deciding on stale data.
+    return bus_->FeedBack(id_) == 1;
+}
+
+int Servo::cachedCurrent()
+{
+    return bus_->ReadCurrent(-1);
+}
+
+int Servo::cachedPosition()
+{
+    return bus_->ReadPos(-1);
+}
+
+int Servo::cachedTemperature()
+{
+    return bus_->ReadTemper(-1);
+}
+
+int Servo::cachedVoltage()
+{
+    return bus_->ReadVoltage(-1);
+}
+
+int Servo::cachedLoad()
+{
+    return bus_->ReadLoad(-1);
 }

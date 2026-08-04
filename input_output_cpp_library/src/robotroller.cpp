@@ -13,228 +13,254 @@
 // limitations under the License.
 
 #include "../include/robotroller.h"
-#include "../include/servo.h"
-#include <thread>
-#include <chrono>
-#include <iostream>
-#include <cstdlib>
 
-#define PROTOCOL_VERSION 2.0
+#include <chrono>
+#include <cmath>
+#include <cstdlib>
+#include <iostream>
+#include <thread>
+
+namespace
+{
+// The reflex loop polls telemetry continuously on the same half-duplex bus that
+// carries position commands. A short sleep keeps it from monopolising the bus
+// while still checking every servo several hundred times a second -- far faster
+// than any mechanical failure develops.
+constexpr auto kReflexPollInterval = std::chrono::microseconds(500);
+
+// How long torque stays off while the reflex releases mechanical tension.
+constexpr auto kReflexTorqueOffTime = std::chrono::milliseconds(1);
+} // namespace
 
 Robotroller::ServoPositions Robotroller::getPositionsForAction(int action)
 {
-    ServoPositions positions[18] = {
-        {dpad_servo_default, dpad_servo_default, button_servo_default}, // 0: NOOP
-        {dpad_servo_default, dpad_servo_default, button_deflection}, // 1: FIRE
-        {dpad_servo_default, dpad_servo_up, button_servo_default}, // 2: UP
-        {dpad_servo_right, dpad_servo_default, button_servo_default}, // 3: RIGHT
-        {dpad_servo_left, dpad_servo_default, button_servo_default}, // 4: LEFT
-        {dpad_servo_default, dpad_servo_down, button_servo_default}, // 5: DOWN
-        {dpad_servo_right, dpad_servo_up, button_servo_default}, // 6: UPRIGHT
-        {dpad_servo_left, dpad_servo_up, button_servo_default}, // 7: UPLEFT
-        {dpad_servo_right, dpad_servo_down, button_servo_default}, // 8: DOWNRIGHT
-        {dpad_servo_left, dpad_servo_down, button_servo_default}, // 9: DOWNLEFT
-        {dpad_servo_default, dpad_servo_up, button_deflection}, // 10: UPFIRE
-        {dpad_servo_right, dpad_servo_default, button_deflection}, // 11: RIGHTFIRE
-        {dpad_servo_left, dpad_servo_default, button_deflection}, // 12: LEFTFIRE
-        {dpad_servo_default, dpad_servo_down, button_deflection}, // 13: DOWNFIRE
-        {dpad_servo_right, dpad_servo_up, button_deflection}, // 14: UPRIGHTFIRE
-        {dpad_servo_left, dpad_servo_up, button_deflection}, // 15: UPLEFTFIRE
-        {dpad_servo_right, dpad_servo_down, button_deflection}, // 16: DOWNRIGHTFIRE
-        {dpad_servo_left, dpad_servo_down, button_deflection} // 17: DOWNLEFTFIRE
+    const ServoPositions positions[18] = {
+        {dpad_servo_default_, dpad_servo_default_, button_servo_default_}, // 0: NOOP
+        {dpad_servo_default_, dpad_servo_default_, button_deflection_},    // 1: FIRE
+        {dpad_servo_default_, dpad_servo_up_, button_servo_default_},      // 2: UP
+        {dpad_servo_right_, dpad_servo_default_, button_servo_default_},   // 3: RIGHT
+        {dpad_servo_left_, dpad_servo_default_, button_servo_default_},    // 4: LEFT
+        {dpad_servo_default_, dpad_servo_down_, button_servo_default_},    // 5: DOWN
+        {dpad_servo_right_, dpad_servo_up_, button_servo_default_},        // 6: UPRIGHT
+        {dpad_servo_left_, dpad_servo_up_, button_servo_default_},         // 7: UPLEFT
+        {dpad_servo_right_, dpad_servo_down_, button_servo_default_},      // 8: DOWNRIGHT
+        {dpad_servo_left_, dpad_servo_down_, button_servo_default_},       // 9: DOWNLEFT
+        {dpad_servo_default_, dpad_servo_up_, button_deflection_},         // 10: UPFIRE
+        {dpad_servo_right_, dpad_servo_default_, button_deflection_},      // 11: RIGHTFIRE
+        {dpad_servo_left_, dpad_servo_default_, button_deflection_},       // 12: LEFTFIRE
+        {dpad_servo_default_, dpad_servo_down_, button_deflection_},       // 13: DOWNFIRE
+        {dpad_servo_right_, dpad_servo_up_, button_deflection_},           // 14: UPRIGHTFIRE
+        {dpad_servo_left_, dpad_servo_up_, button_deflection_},            // 15: UPLEFTFIRE
+        {dpad_servo_right_, dpad_servo_down_, button_deflection_},         // 16: DOWNRIGHTFIRE
+        {dpad_servo_left_, dpad_servo_down_, button_deflection_}           // 17: DOWNLEFTFIRE
     };
 
     return positions[action];
 }
 
-
-Robotroller::Robotroller(std::string device_path, int baud_rate, int position_d_gain, int position_i_gain, int position_p_gain,
-                         int dpad_servo_default, int dpad_servo_right, int dpad_servo_left, int dpad_servo_up, int dpad_servo_down,
-                         int button_servo_default, int button_deflection)
-    : portHandler(nullptr),
-      packetHandler(nullptr),
-      fire_servo(nullptr),
-      left_right_servo(nullptr),
-      up_down_servo(nullptr),
-      dpad_servo_default(dpad_servo_default),
-      dpad_servo_right(dpad_servo_right),
-      dpad_servo_left(dpad_servo_left),
-      dpad_servo_up(dpad_servo_up),
-      dpad_servo_down(dpad_servo_down),
-      button_servo_default(button_servo_default),
-      button_deflection(button_deflection),
-      robotroller_thread_is_running(true),
-      new_action_to_execute(-1), 
-      last_action_executed(0)
+Robotroller::Robotroller(std::string device_path, int baud_rate, int position_d_gain,
+                         int position_i_gain, int position_p_gain, int dpad_servo_default,
+                         int dpad_servo_right, int dpad_servo_left, int dpad_servo_up,
+                         int dpad_servo_down, int button_servo_default, int button_deflection,
+                         int goal_speed, int goal_acc, int torque_limit, int overcurrent_counts)
+    : fire_servo_(nullptr),
+      left_right_servo_(nullptr),
+      up_down_servo_(nullptr),
+      new_action_to_execute_(-1),
+      last_action_executed_(0),
+      robotroller_thread_is_running_(true),
+      dpad_servo_default_(dpad_servo_default),
+      dpad_servo_right_(dpad_servo_right),
+      dpad_servo_left_(dpad_servo_left),
+      dpad_servo_up_(dpad_servo_up),
+      dpad_servo_down_(dpad_servo_down),
+      button_servo_default_(button_servo_default),
+      button_deflection_(button_deflection),
+      goal_speed_(goal_speed),
+      goal_acc_(goal_acc),
+      overcurrent_counts_(overcurrent_counts)
 {
-    // Create and initialize port handler
-    std::cout << "[Robotroller] Attempting to open serial port: " << device_path << std::endl;
-    portHandler = dynamixel::PortHandler::getPortHandler(device_path.c_str());
+    std::cout << "[Robotroller] Opening Feetech servo bus on " << device_path << " at " << baud_rate
+              << " baud" << std::endl;
 
-    if (!portHandler->openPort())
+    // SMS_STS owns the serial port, so a single instance IS the bus. (The
+    // Dynamixel version needed a separate port handler and packet handler.)
+    if (!bus_.begin(baud_rate, device_path.c_str()))
     {
-        std::cerr << "[Robotroller] Failed to open the serial port to dynamixel motors!" << std::endl;
+        std::cerr << "[Robotroller] Failed to open the serial port to the Feetech servos!\n"
+                  << "  Check the device path (prefer a stable /dev/serial/by-id/... path),\n"
+                  << "  that the Waveshare adapter is connected, and that you have permission\n"
+                  << "  (add yourself to the 'dialout' group)." << std::endl;
         exit(1);
     }
-    std::cout << "[Robotroller] Succeeded to open the port!" << std::endl;
-    
-    // Set baud rate
-    if (!portHandler->setBaudRate(baud_rate))
-    {
-        std::cerr << "[Robotroller] Failed to set baud rate to " << baud_rate << std::endl;
-        portHandler->closePort();
-        exit(1);
-    }
-    std::cout << "[Robotroller] Baud rate set to " << baud_rate << std::endl;
-    
-    // Clear any garbage in serial buffers
-    portHandler->clearPort();
-    
-    // Create packet handler
-    packetHandler = dynamixel::PacketHandler::getPacketHandler(PROTOCOL_VERSION);
-    
-    // Initialize servos with shared port and packet handlers
-    fire_servo = new Servo(50, portHandler, packetHandler);
-    left_right_servo = new Servo(51, portHandler, packetHandler);
-    up_down_servo = new Servo(52, portHandler, packetHandler);
-    
-    list_of_servos.push_back(fire_servo);
-    list_of_servos.push_back(left_right_servo);
-    list_of_servos.push_back(up_down_servo);
-    fire_servo->disableTorque();
-    fire_servo->setModeToPosition();
-    if (position_d_gain > 0)
-    {
-        fire_servo->setPositionDGain(position_d_gain);
-    }
-    if (position_i_gain > 0)
-    {
-        fire_servo->setPositionIGain(position_i_gain);
-    }
-    if (position_p_gain > 0)
-    {
-        fire_servo->setPositionPGain(position_p_gain);
-    }
-    fire_servo->enableTorque();
+    std::cout << "[Robotroller] Serial port opened" << std::endl;
 
-    up_down_servo->disableTorque();
-    up_down_servo->setModeToPosition();
-    if (position_d_gain > 0)
-    {
-        up_down_servo->setPositionDGain(position_d_gain);
-    }
-    if (position_i_gain > 0)
-    {
-        up_down_servo->setPositionIGain(position_i_gain);
-    }
-    if (position_p_gain > 0)
-    {
-        up_down_servo->setPositionPGain(position_p_gain);
-    }
-    up_down_servo->enableTorque();
+    fire_servo_ = new Servo(ROBOTROLLER_FIRE_SERVO_ID, &bus_);
+    left_right_servo_ = new Servo(ROBOTROLLER_LEFT_RIGHT_SERVO_ID, &bus_);
+    up_down_servo_ = new Servo(ROBOTROLLER_UP_DOWN_SERVO_ID, &bus_);
 
-    left_right_servo->disableTorque();
-    left_right_servo->setModeToPosition();
-    if (position_d_gain > 0)
+    list_of_servos_.push_back(fire_servo_);
+    list_of_servos_.push_back(left_right_servo_);
+    list_of_servos_.push_back(up_down_servo_);
+
+    // Confirm every servo answers before touching anything. Without this a
+    // missing servo shows up much later as a joystick that only half moves.
+    for (Servo* servo : list_of_servos_)
     {
-        left_right_servo->setPositionDGain(position_d_gain);
+        if (bus_.Ping(static_cast<u8>(servo->id())) == -1)
+        {
+            std::cerr << "[Robotroller] Servo ID " << servo->id() << " did not respond.\n"
+                      << "  Expected IDs " << ROBOTROLLER_FIRE_SERVO_ID << " (fire), "
+                      << ROBOTROLLER_LEFT_RIGHT_SERVO_ID << " (left/right), "
+                      << ROBOTROLLER_UP_DOWN_SERVO_ID << " (up/down) at " << baud_rate << " baud.\n"
+                      << "  Feetech servos ship as ID 1 - assign IDs one servo at a time on an\n"
+                      << "  otherwise empty bus before using the Robotroller." << std::endl;
+            exit(1);
+        }
     }
-    if (position_i_gain > 0)
+    std::cout << "[Robotroller] All three servos responded" << std::endl;
+
+    // Configure each servo with torque off: mode and the PID coefficients live
+    // in EEPROM, and writing them while the motor is driving is asking for a
+    // lurch.
+    for (Servo* servo : list_of_servos_)
     {
-        left_right_servo->setPositionIGain(position_i_gain);
+        servo->disableTorque();
+        servo->setModeToPosition();
+        servo->setPositionPGain(position_p_gain);
+        servo->setPositionIGain(position_i_gain);
+        servo->setPositionDGain(position_d_gain);
+        servo->setTorqueLimit(torque_limit);
+        servo->enableTorque();
     }
-    if (position_p_gain > 0)
-    {
-        left_right_servo->setPositionPGain(position_p_gain);
-    }
-    left_right_servo->enableTorque();
-    
-    // Start the command thread
-    robotroller_thread = std::thread(&Robotroller::sendCommandsToServos, this);
+
+    std::cout << "[Robotroller] Configured (speed " << goal_speed_ << ", acc " << goal_acc_
+              << ", overcurrent reflex at " << overcurrent_counts_ << " counts ~= "
+              << static_cast<int>(overcurrent_counts_ * STS3215_MA_PER_CURRENT_COUNT) << " mA)"
+              << std::endl;
+
+    robotroller_thread_ = std::thread(&Robotroller::sendCommandsToServos, this);
 }
 
 Robotroller::~Robotroller()
 {
-    // Stop the thread
-    robotroller_thread_is_running = false;
-    
-    // Wait for thread to finish
-    if (robotroller_thread.joinable())
+    robotroller_thread_is_running_ = false;
+
+    if (robotroller_thread_.joinable())
     {
-        robotroller_thread.join();
+        robotroller_thread_.join();
     }
-    
-    // Delete servos
-    fire_servo->disableTorque();
-    left_right_servo->disableTorque();
-    up_down_servo->disableTorque();
-    delete fire_servo;
-    delete left_right_servo;
-    delete up_down_servo;
-    
-    // Close port when robotroller is destroyed
-    if (portHandler != nullptr)
+
+    // Torque off on every exit path, so the joystick is never left held.
+    for (Servo* servo : list_of_servos_)
     {
-        portHandler->closePort();
+        servo->disableTorque();
+    }
+
+    delete fire_servo_;
+    delete left_right_servo_;
+    delete up_down_servo_;
+
+    bus_.end();
+}
+
+void Robotroller::applyOvercurrentReflex()
+{
+    // The high-current reflex (paper section 2.1 / appendix B.3): a stalled or
+    // obstructed servo draws heavily, which both damages the gearbox and can
+    // latch the servo into a fault needing a manual power cycle. Freezing the
+    // goal at the present position and briefly cycling torque releases the
+    // mechanical tension. This is what makes unattended multi-day runs safe --
+    // the learning agent physically cannot destroy the hardware.
+    for (Servo* servo : list_of_servos_)
+    {
+        // One round trip fetches position/load/voltage/temperature/current
+        // together; the cached reads below are free.
+        if (!servo->refreshTelemetry())
+        {
+            continue; // transient bus error; try again next pass
+        }
+
+        const int current = servo->cachedCurrent();
+        if (std::abs(current) <= overcurrent_counts_)
+        {
+            continue;
+        }
+
+        const int position = servo->cachedPosition();
+        std::cout << "[Robotroller] Overcurrent on servo " << servo->id() << ": " << current
+                  << " counts (~" << static_cast<int>(std::abs(current) * STS3215_MA_PER_CURRENT_COUNT)
+                  << " mA), temp " << servo->cachedTemperature() << "C - holding at " << position
+                  << " and cycling torque" << std::endl;
+
+        if (position >= 0)
+        {
+            servo->setPosition(position, goal_speed_, goal_acc_);
+        }
+        servo->disableTorque();
+        std::this_thread::sleep_for(kReflexTorqueOffTime);
+        servo->enableTorque();
     }
 }
 
 void Robotroller::sendCommandsToServos()
 {
-
-    while(true){
-        command_mutex.lock();
-        if(new_action_to_execute != -1)
+    while (robotroller_thread_is_running_)
+    {
+        int action = -1;
         {
-            int temp_action = new_action_to_execute;
-            command_mutex.unlock();
-            ServoPositions pos = getPositionsForAction(temp_action);
-            left_right_servo->setPosition(pos.left_right);
-            up_down_servo->setPosition(pos.up_down);
-            fire_servo->setPosition(pos.fire);
-
-            command_mutex.lock();
-            last_action_executed = new_action_to_execute;
-            new_action_to_execute = -1;
-            
-        }
-        command_mutex.unlock();
-
-
-        for (auto servo : list_of_servos) {
-            int16_t cur = servo->getPresentCurrent();
-            if (std::abs(cur) > 1200) {
-                servo->setPosition(servo->getPresentPosition());
-                std::cout << "Disabling torque\n";
-                servo->disableTorque();
-                std::cout << "Enabling torque\n";
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                servo->enableTorque();
-                std::cout << "Overcurrent detected\n";
-            }
+            std::lock_guard<std::mutex> lock(command_mutex_);
+            action = new_action_to_execute_;
         }
 
+        if (action != -1)
+        {
+            const ServoPositions pos = getPositionsForAction(action);
 
-        if(!robotroller_thread_is_running)
-            break; 
+            // All three servos in ONE bus transaction. The Dynamixel version
+            // issued three sequential writes, so the joystick's axes started
+            // moving at measurably different times; a sync write removes that
+            // skew and frees bus time for the reflex's telemetry reads.
+            u8 ids[3] = {static_cast<u8>(left_right_servo_->id()),
+                         static_cast<u8>(up_down_servo_->id()),
+                         static_cast<u8>(fire_servo_->id())};
+            s16 targets[3] = {static_cast<s16>(pos.left_right), static_cast<s16>(pos.up_down),
+                              static_cast<s16>(pos.fire)};
+            u16 speeds[3] = {static_cast<u16>(goal_speed_), static_cast<u16>(goal_speed_),
+                             static_cast<u16>(goal_speed_)};
+            u8 accs[3] = {static_cast<u8>(goal_acc_), static_cast<u8>(goal_acc_),
+                          static_cast<u8>(goal_acc_)};
+
+            bus_.SyncWritePosEx(ids, 3, targets, speeds, accs);
+
+            std::lock_guard<std::mutex> lock(command_mutex_);
+            last_action_executed_ = action;
+            new_action_to_execute_ = -1;
+        }
+
+        applyOvercurrentReflex();
+
+        std::this_thread::sleep_for(kReflexPollInterval);
     }
 }
 
 void Robotroller::setAction(int action)
 {
-    // Skip if same action
-    command_mutex.lock();
-    if (action == new_action_to_execute || (new_action_to_execute == -1 && action == last_action_executed))
+    std::lock_guard<std::mutex> lock(command_mutex_);
+
+    // Already commanded, or already the servos' current pose - nothing to do.
+    if (action == new_action_to_execute_ ||
+        (new_action_to_execute_ == -1 && action == last_action_executed_))
     {
-        command_mutex.unlock();
         return;
     }
-    if (new_action_to_execute != -1)
+
+    // A write is already in flight. Drop this one rather than block the
+    // caller's real-time loop on serial I/O.
+    if (new_action_to_execute_ != -1)
     {
-        // Another command is in progress, skip this one
-        command_mutex.unlock();
         return;
     }
-    new_action_to_execute = action;
-    command_mutex.unlock();
+
+    new_action_to_execute_ = action;
 }

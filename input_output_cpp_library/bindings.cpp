@@ -125,12 +125,15 @@ PYBIND11_MODULE(robotroller, m) {
     
     // Robotroller class bindings
     py::class_<Robotroller>(m, "Robotroller")
-        .def(py::init<std::string, int, int, int, int, int, int, int, int, int, int, int>(),
+        .def(py::init<std::string, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int>(),
              py::arg("device_path"),
              py::arg("baud_rate") = 1000000,
-             py::arg("position_d_gain") = 0,
-             py::arg("position_i_gain") = 0,
-             py::arg("position_p_gain") = 0,
+             // Feetech 1-byte EEPROM coefficients (0-254); negative = leave the
+             // servo's programmed value alone. NOT the Dynamixel gains from the
+             // paper -- different scale and semantics entirely.
+             py::arg("position_d_gain") = -1,
+             py::arg("position_i_gain") = -1,
+             py::arg("position_p_gain") = -1,
              py::arg("dpad_servo_default"),
              py::arg("dpad_servo_right"),
              py::arg("dpad_servo_left"),
@@ -138,14 +141,19 @@ PYBIND11_MODULE(robotroller, m) {
              py::arg("dpad_servo_down"),
              py::arg("button_servo_default"),
              py::arg("button_deflection"),
-             "Initialize Robotroller with device path, baud rate, position PID gains, and servo positions")
+             py::arg("goal_speed") = 600,
+             py::arg("goal_acc") = 20,
+             py::arg("torque_limit") = 500,
+             py::arg("overcurrent_counts") = 185,
+             "Initialize Robotroller with device path, baud rate, Feetech PID coefficients, "
+             "servo positions, motion profile, and the overcurrent reflex threshold in raw counts")
         .def("setAction", &Robotroller::setAction,
              py::arg("action"),
              "Set the action (0-17)");
     
     // PhysicalAtariEnv class bindings
     py::class_<PhysicalAtariEnv>(m, "PhysicalAtariEnv")
-        .def(py::init<std::string, int, int, int, int, int, int, int, int, int, int, std::string, int, int, int, int, int, int, int, int, int, int, int>(),
+        .def(py::init<std::string, int, int, int, int, int, int, int, int, int, int, std::string, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int>(),
              py::arg("game"),
              py::arg("seed"),
              py::arg("camera_index"),
@@ -169,6 +177,10 @@ PYBIND11_MODULE(robotroller, m) {
              py::arg("dpad_servo_down"),
              py::arg("button_servo_default"),
              py::arg("button_deflection"),
+             py::arg("goal_speed") = 600,
+             py::arg("goal_acc") = 20,
+             py::arg("torque_limit") = 500,
+             py::arg("overcurrent_counts") = 185,
              "Initialize PhysicalAtariEnv with game name and hardware parameters")
         .def("step", &PhysicalAtariEnv::step,
              py::arg("action_index"),

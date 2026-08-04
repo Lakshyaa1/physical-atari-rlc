@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 project(robotroller)
 
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find Threads package (needed for std::thread on Linux)
 find_package(Threads REQUIRED)
@@ -15,8 +16,55 @@ find_package(pybind11 REQUIRED)
 # Find apriltag package (needed for AprilTag detection)
 find_package(apriltag REQUIRED)
 
-include_directories(/usr/local/include/dynamixel_sdk/)
-link_directories(/usr/local/lib/)
+# ---------------------------------------------------------------------------
+# Feetech SMS/STS servo SDK (SCServo_Linux)
+#
+# This project originally used the ROBOTIS DynamixelSDK. It now drives Feetech
+# STS3215 servos over a Waveshare bus servo adapter, so it links SCServo_Linux
+# instead: https://github.com/adityakamath/SCServo_Linux
+#
+# Resolution order:
+#   1. -DSCSERVO_ROOT=/path/to/SCServo_Linux  (explicit, wins)
+#   2. a sibling/parent checkout, which is how this repo is laid out
+#   3. an installed copy found via find_package/find_library
+# ---------------------------------------------------------------------------
+set(SCSERVO_ROOT "" CACHE PATH "Path to a SCServo_Linux source checkout")
+
+if(NOT SCSERVO_ROOT)
+    foreach(_candidate
+            "${CMAKE_CURRENT_SOURCE_DIR}/../SCServo_Linux"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../SCServo_Linux"
+            "${CMAKE_CURRENT_SOURCE_DIR}/third_party/SCServo_Linux")
+        if(EXISTS "${_candidate}/include/scservo/SMS_STS.h")
+            get_filename_component(SCSERVO_ROOT "${_candidate}" ABSOLUTE)
+            break()
+        endif()
+    endforeach()
+endif()
+
+if(SCSERVO_ROOT AND EXISTS "${SCSERVO_ROOT}/include/scservo/SMS_STS.h")
+    message(STATUS "Using SCServo_Linux source at ${SCSERVO_ROOT}")
+    # EXCLUDE_FROM_ALL keeps SCServo's ~40 example binaries out of our build.
+    add_subdirectory("${SCSERVO_ROOT}" "${CMAKE_CURRENT_BINARY_DIR}/scservo" EXCLUDE_FROM_ALL)
+    set(SCSERVO_TARGET SCServo)
+else()
+    find_library(SCSERVO_LIB NAMES SCServo scservo)
+    find_path(SCSERVO_INCLUDE_DIR scservo/SMS_STS.h)
+    if(NOT SCSERVO_LIB OR NOT SCSERVO_INCLUDE_DIR)
+        message(FATAL_ERROR
+            "SCServo_Linux not found.\n"
+            "  Clone it next to this repository:\n"
+            "    git clone https://github.com/adityakamath/SCServo_Linux\n"
+            "  or point cmake at an existing checkout:\n"
+            "    cmake .. -DSCSERVO_ROOT=/path/to/SCServo_Linux")
+    endif()
+    message(STATUS "Using installed SCServo: ${SCSERVO_LIB}")
+    add_library(SCServo_imported UNKNOWN IMPORTED)
+    set_target_properties(SCServo_imported PROPERTIES
+        IMPORTED_LOCATION "${SCSERVO_LIB}"
+        INTERFACE_INCLUDE_DIRECTORIES "${SCSERVO_INCLUDE_DIR}")
+    set(SCSERVO_TARGET SCServo_imported)
+endif()
 
 # Build the Python module
 pybind11_add_module(robotroller bindings.cpp src/servo.cpp src/robotroller.cpp src/camera.cpp src/apriltag_detector.cpp src/physical_atari_env.cpp)
@@ -25,18 +73,7 @@ pybind11_add_module(robotroller bindings.cpp src/servo.cpp src/robotroller.cpp s
 target_link_libraries(robotroller PRIVATE Threads::Threads)
 target_link_libraries(robotroller PRIVATE ${OpenCV_LIBS})
 target_link_libraries(robotroller PRIVATE apriltag)
-
-# Link Dynamixel SDK to Python module
-if(APPLE)
-    target_link_libraries(robotroller PUBLIC dxl_mac_cpp)
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-    target_link_libraries(robotroller PUBLIC dxl_x64_cpp)
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arm")
-    target_link_libraries(robotroller PUBLIC dxl_sbc_cpp)
-else()
-    message(WARNING "Unknown architecture ${CMAKE_SYSTEM_PROCESSOR}, defaulting to dxl_x64_cpp")
-    target_link_libraries(robotroller PUBLIC dxl_x64_cpp)
-endif()
+target_link_libraries(robotroller PRIVATE ${SCSERVO_TARGET})
 
 # Install the Python module to the active Python environment
 execute_process(
