@@ -62,10 +62,23 @@ class Robotroller
     // counts (~6.5 mA each). Calibrate it by stalling a servo by hand and
     // reading the reported value; do not assume the paper's 1200 mA.
     //
-    // `goal_speed` is in steps/s and `goal_acc` in units of 100 steps/s^2.
-    // These replace the Dynamixel profile registers and shape how hard the
-    // joystick is thrown -- too aggressive wears out the controller, which is
-    // exactly the failure the paper describes.
+    // `goal_speed` is in steps/s (max ~3400) and `goal_acc` in units of 100
+    // steps/s^2, where **0 means no acceleration limiting** (max slew rate).
+    //
+    // Mind the latency budget. A typical d-pad deflection is ~132 counts, and
+    // the whole platform's measured end-to-end response is ~165 ms, of which
+    // actuation is only one part. An acceleration-limited move follows a
+    // triangular profile, t = 2*sqrt((counts/2)/a), which gets slow fast:
+    //
+    //     speed 2400, acc 0   ->  ~55 ms   (speed-limited)   <-- default
+    //     speed 2400, acc 50  -> ~230 ms   (acceleration-limited)
+    //     speed  600, acc 20  -> ~363 ms   (more than the entire budget)
+    //
+    // The Dynamixel implementation set no profile registers at all, so the
+    // servos ran at their full default rate; acc = 0 is the faithful
+    // equivalent. Raising acc softens the throw -- the paper traced CX40
+    // controller wear to an over-aggressive motion profile -- but pay for it
+    // knowingly, because it comes straight out of the reaction-time budget.
     Robotroller(std::string device_path, int baud_rate, int position_d_gain, int position_i_gain,
                 int position_p_gain, int dpad_servo_default, int dpad_servo_right,
                 int dpad_servo_left, int dpad_servo_up, int dpad_servo_down,

@@ -56,7 +56,10 @@ For sim-only testing (no hardware), see [agent_code/README.md](agent_code/README
 
 ## Hardware setup
 
-Before using the physical environment, configure each Dynamixel XC330 servo. Factory defaults are ID **1** and baud rate **57600**. The Robotroller expects three servos on the same bus at baud rate **1,000,000**:
+Before using the physical environment, configure each **Feetech STS3215** servo.
+Factory defaults are ID **1** and baud rate **1,000,000** — which is already the
+rate the Robotroller uses, so normally only the IDs need changing. The
+Robotroller expects three servos on the same bus:
 
 | ID | Role |
 |----|------|
@@ -64,27 +67,44 @@ Before using the physical environment, configure each Dynamixel XC330 servo. Fac
 | 51 | Left/right D-pad |
 | 52 | Up/down D-pad |
 
+> **Every servo ships as ID 1.** With more than one connected, they all answer to
+> ID 1 and a single write renames all of them, leaving duplicates you cannot
+> address separately. Connect **one servo at a time**, and assign in **descending
+> order (52, 51, 50)** so a servo still at the factory ID 1 is never the target
+> of a later write. `change_id.py` refuses to run when it sees multiple servos
+> unless you name the source explicitly.
+
 Configure one servo at a time (only one device on the bus during programming):
 
-1. Connect a USB serial adapter to the **agent machine** (not the Devbox).
+1. Connect the Waveshare bus servo adapter to the **agent machine** (not the Devbox).
 2. Install dependencies: from the repository root, `pip install -r setup_scripts/requirements.txt`
 3. Find the serial port: `ls /dev/serial/by-id/`
-4. Connect **one** servo and power it.
-5. Assign the target ID with [`setup_scripts/change_id.py`](setup_scripts/change_id.py) (use `--baud_rate 57600` for factory-default servos).
-6. Set baud rate to 1,000,000 with [`setup_scripts/change_baud_rate.py`](setup_scripts/change_baud_rate.py).
+4. Connect **one** servo and power it. **USB does not power the servos** — an
+   external supply is required (7.4 V for the 7.4 V/19 kg·cm STS3215 variant;
+   never exceed the servo's rating).
+5. Assign the target ID with [`setup_scripts/change_id.py`](setup_scripts/change_id.py).
+6. Only if the servo is not already at 1 Mbps, set it with
+   [`setup_scripts/change_baud_rate.py`](setup_scripts/change_baud_rate.py).
 7. Disconnect that servo, connect the next, and repeat.
 
-Set `SERIAL` to your device path. Example for the fire-button servo:
+Both scripts are **dry-run by default** — they print the plan and change nothing
+until you add `--execute`.
+
+Set `SERIAL` to your device path. Example for the up/down servo:
 
 ```bash
-# Assign ID 50 (communicate at factory baud 57600)
-python setup_scripts/change_id.py --path "$SERIAL" --current_id 1 --new_id 50 --baud_rate 57600
+# See what is on the bus first
+python3 setup_scripts/change_id.py --path "$SERIAL" --new_id 52
 
-# Switch servo to 1 Mbps (required by the Robotroller library)
-python setup_scripts/change_baud_rate.py --path "$SERIAL" --id 50 --current_baud_rate 57600 --new_baud_rate 1000000
+# Assign ID 52
+python3 setup_scripts/change_id.py --path "$SERIAL" --new_id 52 --execute
+
+# Only if the servo is not already at 1 Mbps:
+python3 setup_scripts/change_baud_rate.py --path "$SERIAL" --id 52 \
+    --current_baud_rate 115200 --new_baud_rate 1000000 --execute
 ```
 
-Repeat for the left/right servo (ID 51) and up/down servo (ID 52).
+Repeat for the left/right servo (ID 51) and the fire-button servo (ID 50).
 
 Once all three servos are configured, connect them together on the same bus. Set `robot.serial_port` in your Robotroller config — see [agent_code/README.md#robotroller-config](agent_code/README.md#robotroller-config).
 

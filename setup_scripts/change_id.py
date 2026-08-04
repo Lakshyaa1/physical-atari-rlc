@@ -14,81 +14,137 @@
 # limitations under the License.
 
 """
-Script to change the ID of a Dynamixel XC330 servo.
+change_id.py - assign a new ID to one Feetech SMS/STS servo (e.g. STS3215).
+
+The Robotroller expects three servos on one bus:
+
+    ID 50  fire button
+    ID 51  left / right
+    ID 52  up / down
+
+DO THIS ONE SERVO AT A TIME, with only that servo connected.
+
+Feetech servos all ship as **ID 1**. If two of them are on the bus at once they
+both answer to ID 1, and a single write renames both -- leaving you with two
+servos sharing an ID and no way to address either individually. This script
+refuses to write when it sees more than one servo unless you name the source ID
+explicitly with --current_id, and even then it warns, because duplicate IDs are
+indistinguishable from a single servo on the wire.
+
+Assign in descending order (52, then 51, then 50) so that a servo still sitting
+at the factory ID 1 is never the target of a later write.
+
+Dry run by default; pass --execute to actually write EEPROM.
+
+Example:
+    python3 setup_scripts/change_id.py --path "$SERIAL" --new_id 52
+    python3 setup_scripts/change_id.py --path "$SERIAL" --new_id 52 --execute
 """
 
 import argparse
-from dynamixel_sdk import PortHandler, PacketHandler
+import os
+import sys
 
-# XC330 Control Table Addresses
-ADDR_ID = 7
-PROTOCOL_VERSION = 2.0
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from feetech_protocol import ADDR_ID, FeetechBus
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Change ID of Dynamixel XC330 servo')
-    parser.add_argument('--path', type=str, required=True,
-                        help='Serial port path (e.g., /dev/ttyUSB0 or /dev/serial/by-id/...)')
-    parser.add_argument('--current_id', type=int, required=True,
-                        help='Current ID of the servo')
-    parser.add_argument('--new_id', type=int, required=True,
-                        help='New ID to set for the servo')
-    parser.add_argument('--baud_rate', type=int, required=True,
-                        help='Current baud rate for communication with the servo (57600 for factory-default XC330)')
-    
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--path", required=True,
+                        help="serial device, e.g. /dev/serial/by-id/usb-...")
+    parser.add_argument("--new_id", type=int, required=True,
+                        help="ID to assign (0-252); Robotroller uses 50, 51, 52")
+    parser.add_argument("--current_id", type=int, default=None,
+                        help="ID of the servo to rename. Required when more than one "
+                             "servo answers on the bus.")
+    parser.add_argument("--baud_rate", type=int, default=1000000,
+                        help="bus baud rate (default 1000000 - the STS3215 factory "
+                             "setting; note this differs from Dynamixel's 57600)")
+    parser.add_argument("--execute", action="store_true",
+                        help="actually write EEPROM (without this, only report the plan)")
     args = parser.parse_args()
-    
-    # Validate ID range (Dynamixel IDs are typically 0-253)
-    if args.current_id < 0 or args.current_id > 253:
-        print(f"Error: Current ID must be between 0 and 253, got {args.current_id}")
-        return
-    
-    if args.new_id < 0 or args.new_id > 253:
-        print(f"Error: New ID must be between 0 and 253, got {args.new_id}")
-        return
-    
-    # Initialize PortHandler
-    port_handler = PortHandler(args.path)
-    
-    # Initialize PacketHandler
-    packet_handler = PacketHandler(PROTOCOL_VERSION)
-    
-    # Open port
-    if not port_handler.openPort():
-        print(f"Failed to open port: {args.path}")
-        return
-    
-    print(f"Successfully opened port: {args.path}")
-    
-    # Set baud rate
-    if not port_handler.setBaudRate(args.baud_rate):
-        print(f"Failed to set baud rate to {args.baud_rate}")
-        port_handler.closePort()
-        return
-    
-    print(f"Baud rate set to {args.baud_rate}")
-    
-    # Write new ID to the servo
-    print(f"Changing servo ID from {args.current_id} to {args.new_id}...")
-    result, error = packet_handler.write1ByteTxRx(port_handler, args.current_id, ADDR_ID, args.new_id)
-    
-    if result != 0:
-        print(f"Communication error: {packet_handler.getTxRxResult(result)}")
-        port_handler.closePort()
-        return
-    
-    if error != 0:
-        print(f"Error from servo: {packet_handler.getRxPacketError(error)}")
-        port_handler.closePort()
-        return
-    
-    print(f"Successfully changed servo ID from {args.current_id} to {args.new_id}")
-    print("Note: The servo will use the new ID immediately. Power cycle may be required for some changes.")
-    
-    # Close port
-    port_handler.closePort()
-    print("Port closed")
+
+    if not 0 <= args.new_id <= 252:
+        print(f"--new_id must be 0-252, got {args.new_id}", file=sys.stderr)
+        return 1
+
+    bus = FeetechBus(args.path, args.baud_rate)
+    try:
+        print(f"Scanning {args.path} at {args.baud_rate} baud ...")
+        found = bus.scan()
+
+        if not found:
+            print("No servos answered.\n"
+                  "  - is the external power supply on? (USB alone does not power the servos)\n"
+                  "  - is the baud rate right? try --baud_rate 57600 or 115200\n"
+                  "  - check the data wiring", file=sys.stderr)
+            return 1
+
+        print(f"Servos found: {found}")
+
+        if args.current_id is None:
+            if len(found) > 1:
+                print(f"\nRefusing to continue: {len(found)} servos are on the bus {found}.\n"
+                      "Renaming with more than one connected risks writing to the wrong servo.\n"
+                      "Either connect just one servo, or name the source explicitly with\n"
+                      "--current_id <id>.", file=sys.stderr)
+                return 1
+            current_id = found[0]
+        else:
+            current_id = args.current_id
+            if current_id not in found:
+                print(f"\nServo ID {current_id} did not answer. Present: {found}",
+                      file=sys.stderr)
+                return 1
+            if len(found) > 1:
+                print(f"\nWARNING: {len(found)} servos are on the bus. If any of them share\n"
+                      f"ID {current_id}, they will ALL be renamed to {args.new_id} and become\n"
+                      "impossible to address separately. Connecting one servo at a time is\n"
+                      "strongly preferred.")
+
+        if current_id == args.new_id:
+            print(f"\nServo is already ID {args.new_id}; nothing to do.")
+            return 0
+
+        if args.new_id in found:
+            print(f"\nRefusing to continue: ID {args.new_id} is already taken by another servo\n"
+                  "on this bus. Pick a free ID, or renumber that servo first.", file=sys.stderr)
+            return 1
+
+        print(f"\nPlan: change servo ID {current_id} -> {args.new_id} (EEPROM)")
+
+        if not args.execute:
+            print("(dry run - pass --execute to actually write)")
+            return 0
+
+        if not bus.unlock_eeprom(current_id):
+            print("Failed to unlock EEPROM", file=sys.stderr)
+            return 1
+
+        wrote = bus.write_byte(current_id, ADDR_ID, args.new_id)
+
+        # The servo answers on its NEW id from this point on, so re-lock there.
+        locked = bus.lock_eeprom(args.new_id)
+
+        if not wrote:
+            print("ID write failed; attempting to re-lock the original ID", file=sys.stderr)
+            bus.lock_eeprom(current_id)
+            return 1
+        if not locked:
+            print(f"WARNING: could not re-lock EEPROM on ID {args.new_id}", file=sys.stderr)
+
+        if bus.ping(args.new_id):
+            print(f"Success: servo now answers to ID {args.new_id}")
+            return 0
+
+        print(f"Wrote the new ID but ID {args.new_id} does not answer. Power-cycle the servo\n"
+              "and re-scan to check.", file=sys.stderr)
+        return 1
+    finally:
+        bus.close()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

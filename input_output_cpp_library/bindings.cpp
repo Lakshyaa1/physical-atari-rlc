@@ -141,8 +141,8 @@ PYBIND11_MODULE(robotroller, m) {
              py::arg("dpad_servo_down"),
              py::arg("button_servo_default"),
              py::arg("button_deflection"),
-             py::arg("goal_speed") = 600,
-             py::arg("goal_acc") = 20,
+             py::arg("goal_speed") = 2400,
+             py::arg("goal_acc") = 0,
              py::arg("torque_limit") = 500,
              py::arg("overcurrent_counts") = 185,
              "Initialize Robotroller with device path, baud rate, Feetech PID coefficients, "
@@ -177,8 +177,8 @@ PYBIND11_MODULE(robotroller, m) {
              py::arg("dpad_servo_down"),
              py::arg("button_servo_default"),
              py::arg("button_deflection"),
-             py::arg("goal_speed") = 600,
-             py::arg("goal_acc") = 20,
+             py::arg("goal_speed") = 2400,
+             py::arg("goal_acc") = 0,
              py::arg("torque_limit") = 500,
              py::arg("overcurrent_counts") = 185,
              "Initialize PhysicalAtariEnv with game name and hardware parameters")

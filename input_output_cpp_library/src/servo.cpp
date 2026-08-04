@@ -19,6 +19,14 @@
 
 Servo::Servo(int id, SMS_STS* bus) : id_(id), bus_(bus) {}
 
+Servo::~Servo()
+{
+    // Best effort: a failure here has nowhere useful to go, and the caller is
+    // already shutting down. Safe because Robotroller declares its SMS_STS bus
+    // before the servos, so the bus is destroyed last.
+    disableTorque();
+}
+
 bool Servo::writeEepromByteIfChanged(int addr, int value, const char* what)
 {
     // EEPROM cells wear out. The gains and mode are written on every startup,

@@ -106,8 +106,8 @@ class RealEnv:
         # of 100 steps/s^2, torque_limit is 0-1000, and overcurrent_counts is
         # the high-current reflex threshold in RAW CURRENT COUNTS (~6.5 mA each
         # on an STS3215) -- not milliamps.
-        goal_speed = config["robot"].get("goal_speed", 600)
-        goal_acc = config["robot"].get("goal_acc", 20)
+        goal_speed = config["robot"].get("goal_speed", 2400)
+        goal_acc = config["robot"].get("goal_acc", 0)
         torque_limit = config["robot"].get("torque_limit", 500)
         overcurrent_counts = config["robot"].get("overcurrent_counts", 185)
         

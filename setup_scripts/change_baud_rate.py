@@ -14,112 +14,114 @@
 # limitations under the License.
 
 """
-Script to change the baud rate of a Dynamixel XC330 servo.
+change_baud_rate.py - set the baud rate of one Feetech SMS/STS servo.
+
+The Robotroller runs its bus at 1,000,000 baud, which is also the STS3215
+factory setting -- so for factory-fresh servos this script usually has nothing
+to do. Use it when a servo has been set to something else, or to move a whole
+bus to a different rate.
+
+NOTE ON PORTING: the Feetech baud register is address 6 and holds a small INDEX
+(0 = 1 Mbps), whereas the Dynamixel version of this script wrote address 8 with
+an entirely different table (7 = 1 Mbps). Writing Dynamixel's value into a
+Feetech servo would set it to 38400 and appear to brick the servo. The two are
+not interchangeable.
+
+Change one servo at a time: the moment the write lands, that servo drops off the
+current baud rate and stops answering until you reconnect at the new one.
+
+Dry run by default; pass --execute to actually write EEPROM.
+
+Example:
+    python3 setup_scripts/change_baud_rate.py --path "$SERIAL" --id 52 \\
+        --current_baud_rate 115200 --new_baud_rate 1000000 --execute
 """
 
 import argparse
-from dynamixel_sdk import PortHandler, PacketHandler
+import os
+import sys
 
-# XC330 Control Table Addresses
-ADDR_BAUD_RATE = 8
-PROTOCOL_VERSION = 2.0
-
-# XC330 baud-rate register values (control table address 8)
-BAUD_RATE_TO_REGISTER = {
-    9600: 0,
-    57600: 1,
-    115200: 2,
-    200000: 3,
-    250000: 4,
-    400000: 5,
-    500000: 6,
-    1000000: 7,
-    2000000: 8,
-    3000000: 9,
-    4000000: 10,
-}
-
-
-def baud_rate_to_register(baud_rate):
-    if baud_rate not in BAUD_RATE_TO_REGISTER:
-        supported = ", ".join(str(b) for b in sorted(BAUD_RATE_TO_REGISTER))
-        raise ValueError(f"Unsupported baud rate {baud_rate}. Supported values: {supported}")
-    return BAUD_RATE_TO_REGISTER[baud_rate]
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from feetech_protocol import ADDR_BAUD_RATE, BAUD_INDEX, FeetechBus
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Change baud rate of Dynamixel XC330 servo')
-    parser.add_argument('--path', type=str, required=True,
-                        help='Serial port path (e.g., /dev/ttyUSB0 or /dev/serial/by-id/...)')
-    parser.add_argument('--id', type=int, required=True,
-                        help='ID of the servo')
-    parser.add_argument('--current_baud_rate', type=int, default=57600,
-                        help='Current baud rate used by the servo (default: 57600, factory setting)')
-    parser.add_argument('--new_baud_rate', type=int, required=True,
-                        help='New baud rate to set on the servo (e.g., 1000000)')
-
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--path", required=True,
+                        help="serial device, e.g. /dev/serial/by-id/usb-...")
+    parser.add_argument("--id", type=int, required=True, help="servo ID to reconfigure")
+    parser.add_argument("--current_baud_rate", type=int, default=1000000,
+                        help="rate the servo is on now (default 1000000, the STS3215 "
+                             "factory setting)")
+    parser.add_argument("--new_baud_rate", type=int, required=True,
+                        help=f"rate to set; one of {sorted(BAUD_INDEX)}")
+    parser.add_argument("--execute", action="store_true",
+                        help="actually write EEPROM (without this, only report the plan)")
     args = parser.parse_args()
 
-    if args.id < 0 or args.id > 253:
-        print(f"Error: Servo ID must be between 0 and 253, got {args.id}")
-        return
+    if args.new_baud_rate not in BAUD_INDEX:
+        print(f"--new_baud_rate must be one of {sorted(BAUD_INDEX)}, got {args.new_baud_rate}",
+              file=sys.stderr)
+        return 1
 
+    new_index = BAUD_INDEX[args.new_baud_rate]
+
+    bus = FeetechBus(args.path, args.current_baud_rate)
     try:
-        register_value = baud_rate_to_register(args.new_baud_rate)
-    except ValueError as exc:
-        print(f"Error: {exc}")
-        return
+        if not bus.ping(args.id):
+            found = bus.scan()
+            print(f"Servo ID {args.id} did not answer at {args.current_baud_rate} baud.",
+                  file=sys.stderr)
+            if found:
+                print(f"  These IDs did answer at this rate: {found}", file=sys.stderr)
+            else:
+                print("  Nothing answered at this rate. Check external power, wiring, and\n"
+                      "  try another --current_baud_rate (STS3215 ships at 1000000).",
+                      file=sys.stderr)
+            return 1
 
-    port_handler = PortHandler(args.path)
-    packet_handler = PacketHandler(PROTOCOL_VERSION)
+        current_index = bus.read_byte(args.id, ADDR_BAUD_RATE)
+        print(f"Servo {args.id} responds at {args.current_baud_rate} baud "
+              f"(baud register = {current_index})")
 
-    if not port_handler.openPort():
-        print(f"Failed to open port: {args.path}")
-        return
+        if current_index == new_index:
+            print(f"Already set to {args.new_baud_rate}; nothing to do.")
+            return 0
 
-    print(f"Successfully opened port: {args.path}")
+        print(f"\nPlan: set servo {args.id} baud register {current_index} -> {new_index} "
+              f"({args.new_baud_rate} baud, EEPROM)")
 
-    if not port_handler.setBaudRate(args.current_baud_rate):
-        print(f"Failed to set port baud rate to {args.current_baud_rate}")
-        port_handler.closePort()
-        return
+        if not args.execute:
+            print("(dry run - pass --execute to actually write)")
+            return 0
 
-    print(f"Port baud rate set to {args.current_baud_rate}")
+        if not bus.unlock_eeprom(args.id):
+            print("Failed to unlock EEPROM", file=sys.stderr)
+            return 1
 
-    print(f"Changing servo {args.id} baud rate to {args.new_baud_rate} (register value {register_value})...")
-    result, error = packet_handler.write1ByteTxRx(
-        port_handler, args.id, ADDR_BAUD_RATE, register_value)
+        # After this write the servo is on the NEW rate, so the reply to this
+        # packet -- and the EEPROM re-lock -- cannot be delivered on the old
+        # one. Re-open at the new rate to finish the job.
+        bus.write(args.id, ADDR_BAUD_RATE, [new_index])
+    finally:
+        bus.close()
 
-    if result != 0:
-        print(f"Communication error: {packet_handler.getTxRxResult(result)}")
-        port_handler.closePort()
-        return
-
-    if error != 0:
-        print(f"Error from servo: {packet_handler.getRxPacketError(error)}")
-        port_handler.closePort()
-        return
-
-    print(f"Successfully wrote new baud rate to servo {args.id}")
-
-    if not port_handler.setBaudRate(args.new_baud_rate):
-        print(f"Failed to set port baud rate to {args.new_baud_rate} for verification")
-        port_handler.closePort()
-        return
-
-    print(f"Port baud rate set to {args.new_baud_rate}")
-
-    model_number, result, error = packet_handler.ping(port_handler, args.id)
-    if result != 0:
-        print(f"Warning: Could not ping servo at new baud rate: {packet_handler.getTxRxResult(result)}")
-    elif error != 0:
-        print(f"Warning: Ping error from servo: {packet_handler.getRxPacketError(error)}")
-    else:
-        print(f"Verified communication with servo {args.id} at {args.new_baud_rate} (model number: {model_number})")
-
-    port_handler.closePort()
-    print("Port closed")
+    print(f"Reconnecting at {args.new_baud_rate} baud to verify and re-lock ...")
+    new_bus = FeetechBus(args.path, args.new_baud_rate)
+    try:
+        if not new_bus.ping(args.id):
+            print(f"Servo {args.id} did not answer at {args.new_baud_rate} baud.\n"
+                  "Power-cycle it and scan each rate to find where it landed.",
+                  file=sys.stderr)
+            return 1
+        if not new_bus.lock_eeprom(args.id):
+            print(f"WARNING: could not re-lock EEPROM on servo {args.id}", file=sys.stderr)
+        print(f"Success: servo {args.id} now runs at {args.new_baud_rate} baud")
+        return 0
+    finally:
+        new_bus.close()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

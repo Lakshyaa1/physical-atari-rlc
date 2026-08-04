@@ -1,1 +1,7 @@
-dynamixel_sdk>=3.7.0
+# Feetech SMS/STS servo setup scripts.
+#
+# The servo protocol is implemented directly in feetech_protocol.py, so the only
+# dependency is a serial port library. (This project previously used Dynamixel
+# XC-330 servos and dynamixel_sdk; the Feetech register map, baud-rate encoding,
+# and wire protocol are all different, so that SDK no longer applies.)
+pyserial>=3.5

@@ -75,6 +75,16 @@ class Servo
     // `bus` must outlive this object and is shared between all servos.
     Servo(int id, SMS_STS* bus);
 
+    // Cuts torque, matching the Dynamixel implementation this replaces.
+    // Redundant with Robotroller's own shutdown path, and deliberately so:
+    // "torque off on every exit path" is a safety invariant of this project,
+    // and a joystick left held down by a dead process is exactly the state
+    // worth spending a redundant write to avoid.
+    ~Servo();
+
+    Servo(const Servo&) = delete;
+    Servo& operator=(const Servo&) = delete;
+
     int id() const { return id_; }
 
     // --- configuration -----------------------------------------------------
