@@ -112,7 +112,8 @@ class RealEnv:
         overcurrent_counts = config["robot"].get("overcurrent_counts", 185)
         
         # Extract servo position configuration
-        dpad_servo_default = config["robot"]["dpad_servo_default"]
+        dpad_lr_default = config["robot"]["dpad_lr_default"]
+        dpad_ud_default = config["robot"]["dpad_ud_default"]
         dpad_servo_right = config["robot"]["dpad_servo_right"]
         dpad_servo_left = config["robot"]["dpad_servo_left"]
         dpad_servo_up = config["robot"]["dpad_servo_up"]
@@ -156,7 +157,8 @@ class RealEnv:
             position_i_gain,
             position_p_gain,
             baud_rate,
-            dpad_servo_default,
+            dpad_lr_default,
+            dpad_ud_default,
             dpad_servo_right,
             dpad_servo_left,
             dpad_servo_up,

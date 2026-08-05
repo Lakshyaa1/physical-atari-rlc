@@ -80,7 +80,8 @@ class Robotroller
     // controller wear to an over-aggressive motion profile -- but pay for it
     // knowingly, because it comes straight out of the reaction-time budget.
     Robotroller(std::string device_path, int baud_rate, int position_d_gain, int position_i_gain,
-                int position_p_gain, int dpad_servo_default, int dpad_servo_right,
+                int position_p_gain, int dpad_lr_default, int dpad_ud_default,
+                int dpad_servo_right,
                 int dpad_servo_left, int dpad_servo_up, int dpad_servo_down,
                 int button_servo_default, int button_deflection, int goal_speed, int goal_acc,
                 int torque_limit, int overcurrent_counts);
@@ -123,7 +124,12 @@ class Robotroller
     // Servo position parameters (encoder counts, 0-4095). Per-robot
     // calibration; the paper's values are for a different body and a different
     // servo family.
-    int dpad_servo_default_;
+    // The two dpad axes get independent neutrals: there is no reason a
+    // left/right servo and an up/down servo rest on the same encoder count
+    // unless the horns happen to be indexed that way (the paper's build put
+    // both at 2048; this one rests 324 counts apart).
+    int dpad_lr_default_;
+    int dpad_ud_default_;
     int dpad_servo_right_;
     int dpad_servo_left_;
     int dpad_servo_up_;

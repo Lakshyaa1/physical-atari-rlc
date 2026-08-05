@@ -34,7 +34,8 @@ PhysicalAtariEnv::PhysicalAtariEnv(
     int position_i_gain,
     int position_p_gain,
     int baud_rate,
-    int dpad_servo_default,
+    int dpad_lr_default,
+    int dpad_ud_default,
     int dpad_servo_right,
     int dpad_servo_left,
     int dpad_servo_up,
@@ -47,7 +48,7 @@ PhysicalAtariEnv::PhysicalAtariEnv(
     int overcurrent_counts
 ) : camera(camera_index, width, height, focus_value, zoom_value, fps_value, exposure_value, brightness_value, contrast_value),
     robotroller(serial_port, baud_rate, position_d_gain, position_i_gain, position_p_gain,
-                dpad_servo_default, dpad_servo_right, dpad_servo_left, dpad_servo_up, dpad_servo_down,
+                dpad_lr_default, dpad_ud_default, dpad_servo_right, dpad_servo_left, dpad_servo_up, dpad_servo_down,
                 button_servo_default, button_deflection,
                 goal_speed, goal_acc, torque_limit, overcurrent_counts),
     detector(),

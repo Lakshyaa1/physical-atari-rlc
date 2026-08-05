@@ -35,20 +35,20 @@ constexpr auto kReflexTorqueOffTime = std::chrono::milliseconds(1);
 Robotroller::ServoPositions Robotroller::getPositionsForAction(int action)
 {
     const ServoPositions positions[18] = {
-        {dpad_servo_default_, dpad_servo_default_, button_servo_default_}, // 0: NOOP
-        {dpad_servo_default_, dpad_servo_default_, button_deflection_},    // 1: FIRE
-        {dpad_servo_default_, dpad_servo_up_, button_servo_default_},      // 2: UP
-        {dpad_servo_right_, dpad_servo_default_, button_servo_default_},   // 3: RIGHT
-        {dpad_servo_left_, dpad_servo_default_, button_servo_default_},    // 4: LEFT
-        {dpad_servo_default_, dpad_servo_down_, button_servo_default_},    // 5: DOWN
+        {dpad_lr_default_, dpad_ud_default_, button_servo_default_}, // 0: NOOP
+        {dpad_lr_default_, dpad_ud_default_, button_deflection_},    // 1: FIRE
+        {dpad_lr_default_, dpad_servo_up_, button_servo_default_},      // 2: UP
+        {dpad_servo_right_, dpad_ud_default_, button_servo_default_},   // 3: RIGHT
+        {dpad_servo_left_, dpad_ud_default_, button_servo_default_},    // 4: LEFT
+        {dpad_lr_default_, dpad_servo_down_, button_servo_default_},    // 5: DOWN
         {dpad_servo_right_, dpad_servo_up_, button_servo_default_},        // 6: UPRIGHT
         {dpad_servo_left_, dpad_servo_up_, button_servo_default_},         // 7: UPLEFT
         {dpad_servo_right_, dpad_servo_down_, button_servo_default_},      // 8: DOWNRIGHT
         {dpad_servo_left_, dpad_servo_down_, button_servo_default_},       // 9: DOWNLEFT
-        {dpad_servo_default_, dpad_servo_up_, button_deflection_},         // 10: UPFIRE
-        {dpad_servo_right_, dpad_servo_default_, button_deflection_},      // 11: RIGHTFIRE
-        {dpad_servo_left_, dpad_servo_default_, button_deflection_},       // 12: LEFTFIRE
-        {dpad_servo_default_, dpad_servo_down_, button_deflection_},       // 13: DOWNFIRE
+        {dpad_lr_default_, dpad_servo_up_, button_deflection_},         // 10: UPFIRE
+        {dpad_servo_right_, dpad_ud_default_, button_deflection_},      // 11: RIGHTFIRE
+        {dpad_servo_left_, dpad_ud_default_, button_deflection_},       // 12: LEFTFIRE
+        {dpad_lr_default_, dpad_servo_down_, button_deflection_},       // 13: DOWNFIRE
         {dpad_servo_right_, dpad_servo_up_, button_deflection_},           // 14: UPRIGHTFIRE
         {dpad_servo_left_, dpad_servo_up_, button_deflection_},            // 15: UPLEFTFIRE
         {dpad_servo_right_, dpad_servo_down_, button_deflection_},         // 16: DOWNRIGHTFIRE
@@ -59,7 +59,8 @@ Robotroller::ServoPositions Robotroller::getPositionsForAction(int action)
 }
 
 Robotroller::Robotroller(std::string device_path, int baud_rate, int position_d_gain,
-                         int position_i_gain, int position_p_gain, int dpad_servo_default,
+                         int position_i_gain, int position_p_gain, int dpad_lr_default,
+                         int dpad_ud_default,
                          int dpad_servo_right, int dpad_servo_left, int dpad_servo_up,
                          int dpad_servo_down, int button_servo_default, int button_deflection,
                          int goal_speed, int goal_acc, int torque_limit, int overcurrent_counts)
@@ -69,7 +70,8 @@ Robotroller::Robotroller(std::string device_path, int baud_rate, int position_d_
       new_action_to_execute_(-1),
       last_action_executed_(0),
       robotroller_thread_is_running_(true),
-      dpad_servo_default_(dpad_servo_default),
+      dpad_lr_default_(dpad_lr_default),
+      dpad_ud_default_(dpad_ud_default),
       dpad_servo_right_(dpad_servo_right),
       dpad_servo_left_(dpad_servo_left),
       dpad_servo_up_(dpad_servo_up),

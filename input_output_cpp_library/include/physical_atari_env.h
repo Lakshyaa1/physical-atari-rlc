@@ -75,7 +75,8 @@ public:
     // position_i_gain: Position I gain for servos
     // position_p_gain: Position P gain for servos
     // baud_rate: Baud rate for serial communication
-    // dpad_servo_default: Default position for dpad servos
+    // dpad_lr_default: Neutral position for the left/right dpad servo
+    // dpad_ud_default: Neutral position for the up/down dpad servo
     // dpad_servo_right: Right position for dpad servo
     // dpad_servo_left: Left position for dpad servo
     // dpad_servo_up: Up position for dpad servo
@@ -99,7 +100,8 @@ public:
         int position_i_gain,
         int position_p_gain,
         int baud_rate,
-        int dpad_servo_default,
+        int dpad_lr_default,
+        int dpad_ud_default,
         int dpad_servo_right,
         int dpad_servo_left,
         int dpad_servo_up,

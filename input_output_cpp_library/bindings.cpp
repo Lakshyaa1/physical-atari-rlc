@@ -125,7 +125,7 @@ PYBIND11_MODULE(robotroller, m) {
     
     // Robotroller class bindings
     py::class_<Robotroller>(m, "Robotroller")
-        .def(py::init<std::string, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int>(),
+        .def(py::init<std::string, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int>(),
              py::arg("device_path"),
              py::arg("baud_rate") = 1000000,
              // Feetech 1-byte EEPROM coefficients (0-254); negative = leave the
@@ -134,7 +134,8 @@ PYBIND11_MODULE(robotroller, m) {
              py::arg("position_d_gain") = -1,
              py::arg("position_i_gain") = -1,
              py::arg("position_p_gain") = -1,
-             py::arg("dpad_servo_default"),
+             py::arg("dpad_lr_default"),
+             py::arg("dpad_ud_default"),
              py::arg("dpad_servo_right"),
              py::arg("dpad_servo_left"),
              py::arg("dpad_servo_up"),
@@ -153,7 +154,7 @@ PYBIND11_MODULE(robotroller, m) {
     
     // PhysicalAtariEnv class bindings
     py::class_<PhysicalAtariEnv>(m, "PhysicalAtariEnv")
-        .def(py::init<std::string, int, int, int, int, int, int, int, int, int, int, std::string, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int>(),
+        .def(py::init<std::string, int, int, int, int, int, int, int, int, int, int, std::string, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int>(),
              py::arg("game"),
              py::arg("seed"),
              py::arg("camera_index"),
@@ -170,7 +171,8 @@ PYBIND11_MODULE(robotroller, m) {
              py::arg("position_i_gain"),
              py::arg("position_p_gain"),
              py::arg("baud_rate"),
-             py::arg("dpad_servo_default"),
+             py::arg("dpad_lr_default"),
+             py::arg("dpad_ud_default"),
              py::arg("dpad_servo_right"),
              py::arg("dpad_servo_left"),
              py::arg("dpad_servo_up"),

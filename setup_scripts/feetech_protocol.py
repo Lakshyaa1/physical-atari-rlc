@@ -128,11 +128,13 @@ class FeetechBus:
         frame = buf[start:]
 
         servo_id, length, error = frame[2], frame[3], frame[4]
-        params = list(frame[5:5 + max(0, length - 2)])
+        # A full packet is 4 + LEN bytes (FF FF ID LEN, then LEN more), so the
+        # checksum is the last one, at index 3 + LEN -- not 4 + LEN.
         if len(frame) < 4 + length:
             return None
+        params = list(frame[5:5 + max(0, length - 2)])
         expected = checksum([servo_id, length, error] + params)
-        if frame[4 + length] != expected:
+        if frame[3 + length] != expected:
             return None
         return error, params
 
