@@ -22,13 +22,13 @@ extern "C" {
     #include <common/image_u8.h>
 }
 
-AprilTagDetector::AprilTagDetector() {
+AprilTagDetector::AprilTagDetector(float quad_decimate) {
     // Create AprilTag detector
     detector = apriltag_detector_create();
     
     // Configure detector for speed (matching Python config)
     detector->nthreads = 1;  // Single thread to avoid overhead
-    detector->quad_decimate = 2.0;  // 2x decimation for speed
+    detector->quad_decimate = quad_decimate;  // decimation for speed; see header
     detector->quad_sigma = 0.0;
     detector->refine_edges = 0;  // Skip edge refinement for speed
     detector->decode_sharpening = 0.25;
@@ -37,7 +37,8 @@ AprilTagDetector::AprilTagDetector() {
     tag_family = tag36h11_create();
     apriltag_detector_add_family(detector, tag_family);
     
-    std::cout << "[AprilTagDetector] Initialized with tag36h11 family" << std::endl;
+    std::cout << "[AprilTagDetector] Initialized with tag36h11 family, quad_decimate "
+              << quad_decimate << std::endl;
 }
 
 AprilTagDetector::~AprilTagDetector() {

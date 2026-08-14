@@ -50,7 +50,12 @@ private:
 public:
     // Constructor: initializes AprilTag detector with tag36h11 family
     // Optimized for speed with single thread and decimation
-    AprilTagDetector();
+    // quad_decimate: the detector downsamples by this factor before looking for
+    // quads. 2.0 is much faster but needs the tag to be large in the frame --
+    // a tag whose edge is 50 camera px becomes 25 px, which is under 3 px per
+    // cell for tag36h11 and decodes only intermittently. Measured on this rig:
+    // at 2.0 one corner tag was found in 12% of frames, at 1.5 all six in 100%.
+    AprilTagDetector(float quad_decimate = 2.0f);
     
     // Destructor: cleans up AprilTag resources
     ~AprilTagDetector();

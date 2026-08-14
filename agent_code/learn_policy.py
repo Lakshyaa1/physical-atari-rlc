@@ -52,8 +52,9 @@ BENCHMARK_KEYS = {
     'train', 'seed', 'module_name', 'device', 'load_model', 'save_model',
     'store_weights', 'exp_name', 'checkpoint_dir', 'checkpoint_load_path',
     'max_frames_without_reward', 'latency_model', 'latency_model_path', 'env', 'eval_steps',
-    'fps', 'use_reduced_action_set',
+    'fps', 'use_reduced_action_set', 'action_set',
     'load_weights', 'delay_learning_by_steps', 'robotroller_config_path',
+    'checkpoint_every_steps',
 }
 
 
@@ -391,7 +392,8 @@ def main(argv):
             max_frames_without_reward=agent_parms['max_frames_without_reward'],
             config_path=config_path,
             exp_name=run_name,
-            use_reduced_action_set=agent_parms['use_reduced_action_set']
+            use_reduced_action_set=agent_parms['use_reduced_action_set'],
+            action_set=agent_parms.get('action_set')
         )
         with open(config_path, "r") as f:
             results['robotroller_config'] = json.load(f)
@@ -466,6 +468,17 @@ def main(argv):
     print_interval = 2.0  # Print every 2 seconds
     fps_frame_count = 0  # Track frames for FPS calculation
 
+    # Set up periodic checkpointing before the loop, so the run directory
+    # exists from the start rather than only at the very end.
+    checkpoint_every_steps = int(agent_parms.get('checkpoint_every_steps', 0) or 0)
+    periodic_run_dir = make_run_dir(agent_parms['checkpoint_dir'], run_name)
+    if checkpoint_every_steps:
+        print(f"[learn_policy] checkpointing every {checkpoint_every_steps} steps "
+              f"to {periodic_run_dir}")
+    else:
+        print("[learn_policy] periodic checkpointing DISABLED "
+              "(set checkpoint_every_steps) -- only the final save will happen")
+
     # Run training loop with KeyboardInterrupt handling
     try:
         for frame in range(agent_parms['steps']):
@@ -489,6 +502,19 @@ def main(argv):
                 print(f"[learn_policy TRAIN] frame: {frame}")
                 fps_frame_count = 0
                 last_print_time = current_time
+
+            # Periodic checkpoint. Without this the ONLY save is after training
+            # AND evaluation both finish, so a crash, a kill, or a machine
+            # hiccup at hour 11 of a 12-hour physical run loses everything --
+            # and a run driving real hardware has far more ways to die than a
+            # simulated one.
+            if (checkpoint_every_steps and frame > 0
+                    and frame % checkpoint_every_steps == 0):
+                results['frames_completed'] = frame
+                save_checkpoint(periodic_run_dir, results, agent,
+                                store_weights=agent_parms.get('store_weights', False))
+                print(f"[learn_policy TRAIN] checkpoint at frame {frame} -> {periodic_run_dir}",
+                      flush=True)
 
             # Log metrics periodically
             if frame > 0 and frame % log_interval == 0:
@@ -519,6 +545,18 @@ def main(argv):
             agent.learn(observation, reward, end_of_episode, train=True)
     except KeyboardInterrupt:
         print("\n[learn_policy] Received KeyboardInterrupt during training, shutting down...")
+        # Save before exiting. The only other save is after training AND eval
+        # both complete, so without this a Ctrl-C at hour 11 of a 12-hour
+        # physical run discards every weight it learned.
+        try:
+            results['frames_completed'] = frame
+            results['interrupted_during'] = 'training'
+            save_checkpoint(periodic_run_dir, results, agent,
+                            store_weights=agent_parms.get('store_weights', False))
+            print(f"[learn_policy] interrupt checkpoint saved at frame {frame} "
+                  f"-> {periodic_run_dir}")
+        except Exception as exc:
+            print(f"[learn_policy] could not save interrupt checkpoint: {exc}")
         # Cleanup environment before exiting - this disables motor torques for RealEnv
         if hasattr(env, 'shutdown'):
             env.shutdown()
@@ -595,6 +633,15 @@ def main(argv):
             eval_agent_frame_timings.append(time.time() - eval_agent_frame_start)
     except KeyboardInterrupt:
         print("\n[learn_policy] Received KeyboardInterrupt during evaluation, shutting down...")
+        # Training is already finished by this point -- save it rather than
+        # throw away a completed run because evaluation was cut short.
+        try:
+            results['interrupted_during'] = 'evaluation'
+            save_checkpoint(periodic_run_dir, results, agent,
+                            store_weights=agent_parms.get('store_weights', False))
+            print(f"[learn_policy] interrupt checkpoint saved -> {periodic_run_dir}")
+        except Exception as exc:
+            print(f"[learn_policy] could not save interrupt checkpoint: {exc}")
         # Cleanup environment before exiting - this disables motor torques for RealEnv
         if hasattr(env, 'shutdown'):
             env.shutdown()

@@ -71,7 +71,7 @@ PYBIND11_MODULE(robotroller, m) {
     
     // Camera class bindings
     py::class_<Camera>(m, "Camera")
-        .def(py::init<int, int, int, int, int, int, int, int, int>(),
+        .def(py::init<int, int, int, int, int, int, int, int, int, std::string>(),
              py::arg("camera_index"),
              py::arg("width") = 1280,
              py::arg("height") = 720,
@@ -81,6 +81,7 @@ PYBIND11_MODULE(robotroller, m) {
              py::arg("exposure_value") = 20,
              py::arg("brightness_value") = 128,
              py::arg("contrast_value") = 128,
+             py::arg("fourcc_value") = "YUYV",
              "Initialize camera with specified parameters")
         .def("start", &Camera::start,
              "Start the camera capture thread")
@@ -154,7 +155,7 @@ PYBIND11_MODULE(robotroller, m) {
     
     // PhysicalAtariEnv class bindings
     py::class_<PhysicalAtariEnv>(m, "PhysicalAtariEnv")
-        .def(py::init<std::string, int, int, int, int, int, int, int, int, int, int, std::string, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int>(),
+        .def(py::init<std::string, int, int, int, int, int, int, int, int, int, int, std::string, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int, std::string, float>(),
              py::arg("game"),
              py::arg("seed"),
              py::arg("camera_index"),
@@ -183,6 +184,8 @@ PYBIND11_MODULE(robotroller, m) {
              py::arg("goal_acc") = 0,
              py::arg("torque_limit") = 500,
              py::arg("overcurrent_counts") = 185,
+             py::arg("camera_fourcc") = "YUYV",
+             py::arg("apriltag_quad_decimate") = 2.0f,
              "Initialize PhysicalAtariEnv with game name and hardware parameters")
         .def("step", &PhysicalAtariEnv::step,
              py::arg("action_index"),

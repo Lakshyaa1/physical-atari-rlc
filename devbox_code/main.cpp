@@ -89,6 +89,15 @@ static void print_usage(const char* argv0)
         << "                        Use this to verify the AprilTags and game crop\n"
         << "                        without needing the camera.\n"
         << "  --dump-after=N        step N frames before dumping (default 60)\n"
+        << "  --log-input           print every joystick state CHANGE as the\n"
+        << "                        emulator decodes it, with the raw switches\n"
+        << "                        and the ALE action chosen. Use this to tell\n"
+        << "                        'the robot is not pressing' apart from 'the\n"
+        << "                        devbox is not decoding'.\n"
+        << "  --display=N           put the window on display N (default 0).\n"
+        << "                        Use this to give the game a monitor of its\n"
+        << "                        own: anything overlapping a corner AprilTag\n"
+        << "                        breaks the agent's homography.\n"
         << "  --fps=N               cap the emulator at N frames/sec (default 60,\n"
         << "                        the Atari's native rate). 0 = rely on vsync only,\n"
         << "                        which runs the game at the display's refresh rate.\n"
@@ -218,6 +227,8 @@ int main(int argc, char** argv)
     // and therefore the game, the reward rate, and every latency figure --
     // runs 2.4x too fast, silently. Cap it explicitly. 0 = vsync only.
     int target_fps = 60;
+    int display_index = 0;
+    bool log_input = false;
 
     // Positional: <RomDirectory> <game_name> [results_filename]
     // Anything starting with "--" is an option and may appear anywhere after.
@@ -264,6 +275,14 @@ int main(int argc, char** argv)
         else if (arg.rfind("--fps=", 0) == 0)
         {
             target_fps = std::atoi(arg.substr(6).c_str());
+        }
+        else if (arg.rfind("--display=", 0) == 0)
+        {
+            display_index = std::atoi(arg.substr(10).c_str());
+        }
+        else if (arg == "--log-input")
+        {
+            log_input = true;
         }
         else
         {
@@ -331,8 +350,21 @@ int main(int argc, char** argv)
     // both faster to start and far friendlier under Wayland/XWayland).
     auto window_flags = static_cast<SDL_WindowFlags>(
         windowed ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
-    window = SDL_CreateWindow("Atari 2600", SDL_WINDOWPOS_CENTERED,
-                              SDL_WINDOWPOS_CENTERED,
+    // Centre on the REQUESTED display. Plain SDL_WINDOWPOS_CENTERED always
+    // resolves to display 0, and SDL_VIDEO_FULLSCREEN_DISPLAY is an SDL 1.2
+    // variable that SDL2 ignores -- so on a two-monitor desk the game silently
+    // lands on the wrong screen.
+    const int num_displays = SDL_GetNumVideoDisplays();
+    if (display_index < 0 || display_index >= num_displays)
+    {
+        std::cerr << "[devbox] display " << display_index << " does not exist ("
+                  << num_displays << " attached); using 0" << std::endl;
+        display_index = 0;
+    }
+    std::cout << "[devbox] window on display " << display_index << std::endl;
+    window = SDL_CreateWindow("Atari 2600",
+                              SDL_WINDOWPOS_CENTERED_DISPLAY(display_index),
+                              SDL_WINDOWPOS_CENTERED_DISPLAY(display_index),
                               windowed ? content_w : screen_width,
                               windowed ? content_h : screen_height,
                               window_flags);
@@ -493,6 +525,27 @@ int main(int argc, char** argv)
         // by the SDL_PollEvent loop further down — so it lags by at most one
         // frame. That path is for bring-up only, not for robot runs.)
         input->poll(buttons);
+
+        if (log_input)
+        {
+            // Print only on CHANGE. The bridge free-runs at 1 kHz and we poll
+            // every frame, so logging every sample would bury the transitions
+            // that actually matter.
+            static ButtonState previous;
+            static bool first = true;
+            if (first || buttons.up != previous.up || buttons.down != previous.down ||
+                buttons.left != previous.left || buttons.right != previous.right ||
+                buttons.fire != previous.fire)
+            {
+                std::printf("[input] up=%d down=%d left=%d right=%d fire=%d\n",
+                            buttons.up, buttons.down, buttons.left, buttons.right,
+                            buttons.fire);
+                std::fflush(stdout);
+                previous = buttons;
+                first = false;
+            }
+        }
+
         const int up = buttons.up;
         const int down = buttons.down;
         const int left = buttons.left;

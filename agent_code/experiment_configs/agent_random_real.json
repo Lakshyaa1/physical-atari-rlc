@@ -2,8 +2,14 @@
   "module_name": [
     "agents.agent_random"
   ],
+  "_comment": [
+    "ms_pacman, NOT pong. ALE returns byte-identical screens for NOOP/UP/DOWN/",
+    "FIRE in pong out to 4000 frames -- it needs a start sequence -- so a random",
+    "agent on pong looks broken when the rig is fine. ms_pacman responds to",
+    "direction input immediately, which is the whole point of a smoke test."
+  ],
   "game": [
-    "pong"
+    "ms_pacman"
   ],
   "seed": [
     0

@@ -64,7 +64,7 @@ BENCHMARK_KEYS = {
     'train', 'seed', 'module_name', 'device', 'load_model', 'save_model',
     'store_weights', 'exp_name', 'checkpoint_dir', 'checkpoint_load_path',
     'max_frames_without_reward', 'latency_model', 'latency_model_path', 'env', 'eval_steps',
-    'fps', 'use_reduced_action_set',
+    'fps', 'use_reduced_action_set', 'action_set',
     'load_weights', 'delay_learning_by_steps', 'robotroller_config_path',
 }
 
@@ -325,7 +325,12 @@ def main():
             max_frames_without_reward=agent_parms['max_frames_without_reward'],
             config_path=config_path,
             exp_name=eval_run_name,
-            use_reduced_action_set=agent_parms['use_reduced_action_set']
+            use_reduced_action_set=agent_parms['use_reduced_action_set'],
+            # Must match training. These weights were trained on a restricted
+            # action set, so rebuilding the env from the game's minimal set
+            # would give the agent a different number of actions than its output
+            # layer has -- the checkpoint records action_set for exactly this.
+            action_set=agent_parms.get('action_set')
         )
         
         with open(config_path, "r") as f:
@@ -357,13 +362,24 @@ def main():
     # Create the agent
     print(f"Creating agent: {agent_parms['module_name']}")
     print(f"Using device: {args.device}")
+    # Evaluation does not learn, so it does not need the training replay ring.
+    # Drop any ring_size carried in from the checkpoint before overriding it:
+    # passing it both explicitly and via **parms is a TypeError ("multiple
+    # values for keyword argument"), which is why a checkpoint that recorded
+    # ring_size could not be evaluated at all.
+    eval_parms = dict(parms)
+    trained_ring = eval_parms.pop('ring_size', None)
+    if trained_ring is not None:
+        print(f"[evaluate_policy] checkpoint trained with ring_size={trained_ring}; "
+              f"using 10000 for evaluation (no learning, so the replay ring is unused)")
+
     agent = importlib.import_module(agent_parms['module_name']).Agent(
         agent_parms['seed'],
         num_actions,
         args.eval_steps,  # Use eval steps instead of training steps
         args.device,
         ring_size=10000,  # Use smaller ring buffer to save memory during evaluation
-        **parms
+        **eval_parms
     )
 
     apply_checkpoint_to_agent(agent, args.checkpoint_dir, args.device, mode='eval')

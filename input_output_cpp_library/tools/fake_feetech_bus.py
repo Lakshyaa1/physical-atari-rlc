@@ -21,9 +21,10 @@ no Waveshare adapter. It speaks the actual SMS/STS wire protocol, so it
 exercises the driver's real framing, register addresses, and byte order rather
 than a mock of them.
 
-Every register access is logged to a JSON file so a test can assert on what the
-driver actually did -- which servo IDs it addressed, whether it used a sync
-write, which EEPROM cells it touched.
+Every register access is logged as JSON Lines (one event per line, appended and
+flushed) so a test can assert on what the driver actually did -- which servo IDs
+it addressed, whether it used a sync write, which EEPROM cells it touched. Use
+load_log() to read it; a reader may safely tail it while the bus is running.
 
     python3 tools/fake_feetech_bus.py --log /tmp/bus.json &
     # note the printed /dev/pts/N, then point the driver at it
@@ -98,6 +99,21 @@ def checksum(payload):
     return (~sum(payload)) & 0xFF
 
 
+def load_log(path):
+    """Read an event log written by --log. Skips a trailing partial line."""
+    events = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                break  # reader caught up with the writer mid-line
+    return events
+
+
 class FakeBus:
     def __init__(self, ids, overcurrent_id=None, log_path=None):
         self.servos = {
@@ -105,12 +121,17 @@ class FakeBus:
         }
         self.log = []
         self.log_path = log_path
+        # One JSON object per line, appended and flushed. Rewriting the whole
+        # log on every event is O(n^2), and the Robotroller's overcurrent
+        # reflex polls telemetry every 500us -- tens of thousands of events a
+        # second -- so a whole-file rewrite stalls the bus within seconds.
+        self.log_file = open(log_path, "w", buffering=1) if log_path else None
 
     def record(self, event, **kw):
-        self.log.append(dict(event=event, t=round(time.monotonic(), 4), **kw))
-        if self.log_path:
-            with open(self.log_path, "w") as f:
-                json.dump(self.log, f, indent=1)
+        entry = dict(event=event, t=round(time.monotonic(), 4), **kw)
+        self.log.append(entry)
+        if self.log_file:
+            self.log_file.write(json.dumps(entry) + "\n")
 
     def status(self, servo_id, params=()):
         params = list(params)
@@ -168,7 +189,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--ids", default=",".join(str(i) for i in DEFAULT_IDS))
-    parser.add_argument("--log", default=None, help="write a JSON event log here")
+    parser.add_argument("--log", default=None,
+                        help="write a JSON Lines event log here (read with load_log)")
     parser.add_argument("--path-file", default=None, help="write the pty path here")
     parser.add_argument("--inject-overcurrent", type=int, default=None,
                         help="servo ID that should report a high present current")
@@ -217,9 +239,8 @@ def main():
                 if reply:
                     os.write(master_fd, reply)
     finally:
-        if args.log:
-            with open(args.log, "w") as f:
-                json.dump(bus.log, f, indent=1)
+        if bus.log_file:
+            bus.log_file.close()
         print(f"[fake-bus] {len(bus.log)} bus events", flush=True)
         os.close(master_fd)
         os.close(slave_fd)

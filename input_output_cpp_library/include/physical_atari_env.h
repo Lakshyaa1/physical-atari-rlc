@@ -116,7 +116,12 @@ public:
         int goal_speed,
         int goal_acc,
         int torque_limit,
-        int overcurrent_counts
+        int overcurrent_counts,
+        // Appended at the END rather than grouped with the other camera
+        // parameters on purpose: real_env.py passes this list POSITIONALLY, so
+        // inserting mid-list would silently shift every argument after it.
+        const std::string& camera_fourcc = "YUYV",
+        float apriltag_quad_decimate = 2.0f
     );
     
     // Destructor

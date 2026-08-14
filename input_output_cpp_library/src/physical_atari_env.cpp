@@ -45,13 +45,15 @@ PhysicalAtariEnv::PhysicalAtariEnv(
     int goal_speed,
     int goal_acc,
     int torque_limit,
-    int overcurrent_counts
-) : camera(camera_index, width, height, focus_value, zoom_value, fps_value, exposure_value, brightness_value, contrast_value),
+    int overcurrent_counts,
+    const std::string& camera_fourcc,
+    float apriltag_quad_decimate
+) : camera(camera_index, width, height, focus_value, zoom_value, fps_value, exposure_value, brightness_value, contrast_value, camera_fourcc),
     robotroller(serial_port, baud_rate, position_d_gain, position_i_gain, position_p_gain,
                 dpad_lr_default, dpad_ud_default, dpad_servo_right, dpad_servo_left, dpad_servo_up, dpad_servo_down,
                 button_servo_default, button_deflection,
                 goal_speed, goal_acc, torque_limit, overcurrent_counts),
-    detector(),
+    detector(apriltag_quad_decimate),
     output_width(1280),
     output_height(720),
     game_crop_x(193),

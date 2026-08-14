@@ -17,9 +17,11 @@
 #include <iostream>
 
 Camera::Camera(int camera_index, int width, int height, int focus_value, int zoom_value,
-               int fps_value, int exposure_value, int brightness_value, int contrast_value)
+               int fps_value, int exposure_value, int brightness_value, int contrast_value,
+               const std::string& fourcc_value)
     : camera_index(camera_index), width(width), height(height), focus(focus_value), zoom(zoom_value),
       fps(fps_value), exposure(exposure_value), brightness(brightness_value), contrast(contrast_value),
+      fourcc(fourcc_value.size() == 4 ? fourcc_value : "YUYV"),
       is_running(false), new_frame_available(false)
 {
     // Open the camera with V4L2 backend
@@ -33,8 +35,15 @@ Camera::Camera(int camera_index, int width, int height, int focus_value, int zoo
     }
     
     // Set camera properties
-    // Set format to YUYV
-    capture.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('Y', 'U', 'Y', 'V'));
+    // Set the pixel format. Must be applied BEFORE the resolution and rate: the
+    // driver picks the frame-interval table from the format it currently holds.
+    if (fourcc_value.size() != 4)
+    {
+        std::cerr << "Warning: fourcc \"" << fourcc_value
+                  << "\" is not 4 characters; falling back to YUYV" << std::endl;
+    }
+    capture.set(cv::CAP_PROP_FOURCC,
+                cv::VideoWriter::fourcc(fourcc[0], fourcc[1], fourcc[2], fourcc[3]));
     
     // Set FPS
     capture.set(cv::CAP_PROP_FPS, fps);
@@ -52,13 +61,38 @@ Camera::Camera(int camera_index, int width, int height, int focus_value, int zoo
     // Set zoom value
     capture.set(cv::CAP_PROP_ZOOM, zoom);
     
-    // Set manual exposure mode (disable auto exposure)
-    // For V4L2: 1 = Manual Mode, 3 = Aperture Priority Mode (auto)
-    // OpenCV uses 0.25 for manual, 0.75 for auto
-    capture.set(cv::CAP_PROP_AUTO_EXPOSURE, 0.25);
-    
-    // Set exposure time (exposure_time_absolute)
-    capture.set(cv::CAP_PROP_EXPOSURE, exposure);
+    // Set manual exposure mode (disable auto exposure).
+    //
+    // For V4L2: 1 = Manual Mode, 3 = Aperture Priority Mode (auto). Older
+    // OpenCV remapped these onto 0.25 / 0.75; OpenCV 5's V4L2 backend passes
+    // the enum straight through, so 0.25 is silently ignored and the camera
+    // stays on auto -- verified on a Lenovo FHD Webcam, where 0.25 read back as
+    // 3 and every subsequent exposure write failed. Try the enum first, fall
+    // back to the legacy encoding, then check we actually got manual.
+    //
+    // This matters more than it looks: auto-exposure hunts as the game screen
+    // changes brightness, which moves the goalposts for the tag detector and
+    // makes the reward channel intermittent.
+    if (!capture.set(cv::CAP_PROP_AUTO_EXPOSURE, 1) ||
+        capture.get(cv::CAP_PROP_AUTO_EXPOSURE) != 1)
+    {
+        capture.set(cv::CAP_PROP_AUTO_EXPOSURE, 0.25);
+    }
+    const double auto_exposure_mode = capture.get(cv::CAP_PROP_AUTO_EXPOSURE);
+    if (auto_exposure_mode != 1)
+    {
+        std::cerr << "Warning: could not put the camera in manual exposure mode "
+                  << "(auto_exposure reads " << auto_exposure_mode << "). Exposure "
+                  << "will drift with screen brightness." << std::endl;
+    }
+
+    // Set exposure time (exposure_time_absolute). Must come AFTER manual mode:
+    // the control is inactive while auto-exposure owns it, and the write fails.
+    if (!capture.set(cv::CAP_PROP_EXPOSURE, exposure))
+    {
+        std::cerr << "Warning: exposure write rejected; camera is choosing its own."
+                  << std::endl;
+    }
     
     // Set brightness
     capture.set(cv::CAP_PROP_BRIGHTNESS, brightness);

@@ -16,6 +16,7 @@
 #define CAMERA_H
 
 #include <opencv2/opencv.hpp>
+#include <string>
 #include <mutex>
 #include <thread>
 #include <atomic>
@@ -39,6 +40,10 @@ private:
     int exposure;
     int brightness;
     int contrast;
+    // Pixel format as a FOURCC, e.g. "YUYV" or "MJPG". Not every camera can do
+    // every format at every resolution: a webcam that manages 30 fps YUYV at
+    // 640x480 may drop to 10 fps at 720p, where MJPG still holds 30.
+    std::string fourcc;
     
     void captureLoop();
 
@@ -52,7 +57,8 @@ public:
            int fps_value = 30,
            int exposure_value = 20,
            int brightness_value = 128,
-           int contrast_value = 128);
+           int contrast_value = 128,
+           const std::string& fourcc_value = "YUYV");
     ~Camera();
     
     void start();

@@ -41,7 +41,8 @@ class RealEnv:
         latency_model=None,
         max_frames_without_reward=18_000,
         exp_name="",
-        use_reduced_action_set=False
+        use_reduced_action_set=False,
+        action_set=None
     ):
         """
         Initialize the physical Atari environment.
@@ -54,6 +55,9 @@ class RealEnv:
             max_frames_without_reward (int): Truncate episode after this many frames without reward
             exp_name (str): Experiment name (kept for interface compatibility)
             use_reduced_action_set (bool): If True, use minimal action set for the game (default: False)
+            action_set (list[int]|None): explicit ALE action values to allow,
+                overriding use_reduced_action_set. e.g. [0, 3, 4] for Pong's
+                paddle without the fire button.
         """
         self.game = game
         self.seed = seed
@@ -88,6 +92,15 @@ class RealEnv:
         camera_exposure = config["camera"].get("exposure", 20)
         camera_brightness = config["camera"].get("brightness", 128)
         camera_contrast = config["camera"].get("contrast", 128)
+        # Pixel format. Not every camera does every format at every resolution:
+        # a webcam that manages 30 fps YUYV at 640x480 can drop to 10 fps at
+        # 720p, where MJPG still holds 30. Defaults to the uncompressed YUYV the
+        # code used unconditionally before this became configurable.
+        camera_fourcc = config["camera"].get("fourcc", "YUYV")
+        # AprilTag detector decimation. 2.0 is the fast default, but it needs
+        # the tags to be large in frame; if the screen does not fill the camera
+        # view, corner tags stop decoding and the homography fails silently.
+        quad_decimate = float(config["camera"].get("apriltag_quad_decimate", 2.0))
 
         # Extract robot configuration.
         #
@@ -121,8 +134,18 @@ class RealEnv:
         button_servo_default = config["robot"]["button_servo_default"]
         button_deflection = config["robot"]["button_deflection"]
 
+        # An explicit action_set overrides everything below. Use it when part of
+        # the robot cannot actuate: an action the hardware cannot perform does
+        # not just waste a step, it ALIASES onto another action (a dead fire
+        # button makes LEFTFIRE physically identical to LEFT), so the agent sees
+        # two actions with identical consequences and has to learn its way out
+        # of a distinction that does not exist.
+        if action_set is not None:
+            self.action_set = list(action_set)
+            print(f"[RealEnv] Using EXPLICIT action set with "
+                  f"{len(self.action_set)} actions: {self.action_set}")
         # Initialize ALE to get minimal action set if needed
-        if use_reduced_action_set:
+        elif use_reduced_action_set:
             print(f"[RealEnv] Initializing ALE to get minimal action set for {game}")
             temp_ale = ALEInterface()
             game_path = roms.get_rom_path(game)
@@ -168,7 +191,9 @@ class RealEnv:
             goal_speed,
             goal_acc,
             torque_limit,
-            overcurrent_counts
+            overcurrent_counts,
+            camera_fourcc,
+            quad_decimate
         )
         
         # Cache for last step results

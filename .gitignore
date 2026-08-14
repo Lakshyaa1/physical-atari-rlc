@@ -25,3 +25,8 @@ agent_code/physical_atari_configs/physical_atari_sample_config.json
 __pycache__/
 *.pyc
 .venv/
+
+# ESP-IDF build output and generated config
+/devbox_code/esp32_joystick_bridge/esp_idf/build/
+/devbox_code/esp32_joystick_bridge/esp_idf/sdkconfig
+/devbox_code/esp32_joystick_bridge/esp_idf/sdkconfig.old

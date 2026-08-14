@@ -51,6 +51,7 @@
 #define JOYSTICK_INPUT_H
 
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
@@ -110,12 +111,13 @@ class SerialInput : public InputSource
     SerialInput(const SerialInput&) = delete;
     SerialInput& operator=(const SerialInput&) = delete;
 
-    bool open_port(const std::string& path, int baud)
+    bool open_port(const std::string& path, int baud, bool announce = true)
     {
         fd_ = open(path.c_str(), O_RDONLY | O_NOCTTY | O_NONBLOCK);
         if (fd_ < 0)
         {
-            std::fprintf(stderr, "[joystick] failed to open %s: %s\n", path.c_str(), std::strerror(errno));
+            if (announce)
+                std::fprintf(stderr, "[joystick] failed to open %s: %s\n", path.c_str(), std::strerror(errno));
             return false;
         }
 
@@ -149,6 +151,7 @@ class SerialInput : public InputSource
 
         tcflush(fd_, TCIFLUSH);
         path_ = path;
+        baud_ = baud;
         std::printf("[joystick] serial input on %s @ %d baud\n", path.c_str(), baud);
         return true;
     }
@@ -157,7 +160,31 @@ class SerialInput : public InputSource
     {
         if (fd_ < 0)
         {
-            return;
+            // Retry about once a second. Reopening by the ORIGINAL path matters:
+            // a /dev/serial/by-id/ symlink follows the device across a
+            // re-enumeration, where a bare /dev/ttyUSBn does not.
+            if (++reopen_countdown_ < 60)
+            {
+                state = ButtonState{};
+                return;
+            }
+            reopen_countdown_ = 0;
+            // Retry quietly. A device unplugged for an hour would otherwise
+            // write 3600 identical error lines into the run log and bury
+            // everything worth reading; say it once, then hourly.
+            const bool announce = (reopen_failures_ == 0) ||
+                                  (reopen_failures_ % 3600 == 0);
+            if (path_.empty() || !open_port(path_, baud_, announce))
+            {
+                ++reopen_failures_;
+                state = ButtonState{};
+                return;
+            }
+            reopen_failures_ = 0;
+            std::printf("[joystick] reconnected to %s\n", path_.c_str());
+            last_data_time_ = std::chrono::steady_clock::now();
+            std::fflush(stdout);
+            have_seen_data_ = false;
         }
 
         // Drain everything buffered and keep only the newest framed byte. The
@@ -180,6 +207,31 @@ class SerialInput : public InputSource
             {
                 break; // drained
             }
+        }
+
+        // Detect a vanished device by SILENCE, not by an error code. With
+        // VMIN=0/VTIME=0 a non-blocking tty returns 0 both for "no data right
+        // now" and for a device that has been unplugged, and an fd left over
+        // from a re-enumeration (ttyUSB0 -> ttyUSB1) keeps returning 0 forever
+        // while /proc shows it as "(deleted)". Checking errno therefore never
+        // fires. The bridge free-runs at 1 kHz, so a second of total silence
+        // means the link is gone, not that nothing is pressed.
+        const auto now = std::chrono::steady_clock::now();
+        if (newest >= 0)
+        {
+            last_data_time_ = now;
+        }
+        else if (have_seen_data_ &&
+                 now - last_data_time_ > std::chrono::milliseconds(1000))
+        {
+            std::fprintf(stderr, "[joystick] no data from %s for 1s -- releasing "
+                                 "all buttons and reopening\n", path_.c_str());
+            close(fd_);
+            fd_ = -1;
+            last_ = 0x80;          // marker set, every switch released
+            have_seen_data_ = false;
+            state = ButtonState{};
+            return;
         }
 
         if (newest >= 0)
@@ -205,6 +257,11 @@ class SerialInput : public InputSource
     const char* name() const override { return "serial"; }
 
   private:
+    int baud_ = 115200;
+    int reopen_countdown_ = 0;
+    long reopen_failures_ = 0;
+    std::chrono::steady_clock::time_point last_data_time_ = std::chrono::steady_clock::now();
+
     static speed_t baud_constant(int baud)
     {
         switch (baud)
