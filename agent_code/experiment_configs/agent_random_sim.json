@@ -17,6 +17,9 @@
   "device": [
     "cpu"
   ],
+  "checkpoint_dir": [
+    "./checkpoints"
+  ],
   "env": [
     "sim"
   ],

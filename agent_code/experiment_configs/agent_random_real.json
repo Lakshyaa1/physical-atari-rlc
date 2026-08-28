@@ -23,6 +23,9 @@
   "device": [
     "cpu"
   ],
+  "checkpoint_dir": [
+    "./checkpoints"
+  ],
   "env": [
     "real"
   ],
