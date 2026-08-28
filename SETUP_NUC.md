@@ -4,6 +4,56 @@ Replaces the laptop-as-Devbox setup with a single NUC handling all physical
 I/O (Devbox render/input *and* agent camera/servos), while heavy compute
 (`learn_policy.py`, torch/CUDA) runs on a separate GPU box on the same LAN.
 
+## Progress log (2026-08-28)
+
+NUC at `192.168.0.135`, user `sra`. `tmux` session `devbox` on the NUC holds
+everything below and survives SSH disconnects -- reattach with
+`ssh sra@192.168.0.135` then `tmux attach -t devbox`.
+
+Done:
+- `PhysicalALE` built and installed (`/usr/local/bin`), ROMs in `devbox_code/games`.
+- `robotroller` Python module built (`input_output_cpp_library` + `SCServo_Linux`,
+  cloned to `~/physical-atari-rlc/SCServo_Linux`, untracked -- reclone if missing)
+  and installed into the system `python3`.
+- `agent_code` deps installed (torch cpu, opencv, ale-py, gymnasium). Full sim
+  pipeline verified end-to-end: `python3 learn_policy.py --config
+  experiment_configs/agent_random_sim.json --run 0` runs clean.
+- Camera (Kreo Owl Camera, `0c45:636d`, `/dev/video0`) detected and streaming.
+  Exposure fixed from a copied-over bad default (`20`, near-black on this sensor)
+  to the camera's own default (`157`); brightness/contrast also needed lowering
+  from the old camera's `128`/`128` since this sensor's real ranges are
+  `-64..64`/`0..64` and were silently clamping to `64`/`64`.
+  `physical_atari_configs/physical_atari_sample_config.json` on the NUC has the
+  live values (gitignored, per-machine -- not in this repo).
+- `PhysicalALE` running fullscreen (not `--windowed`) at 1920x1080 -- windowed
+  mode added window-manager chrome that pushed the bottom of the 1920x1080
+  render off-screen, clipping the two lower AprilTags. Fullscreen fixed this
+  because the render's `frac 1.5` math is sized to exactly fill the display.
+- Two real repo bugs found and fixed on this branch: `input_output_cpp_library`
+  hardcoded `python` instead of `python3` (breaks on plain Ubuntu 24.04), and
+  `agent_random_sim.json`/`agent_random_real.json` were both missing
+  `checkpoint_dir`, which `learn_policy.py` requires unconditionally.
+- Also worked around (NUC-local, not a repo fix): Ubuntu 24.04's
+  `libapriltag-dev` package ships a CMake config with a doubled `lib/lib` path
+  bug -- symlinked `/usr/lib/lib/x86_64-linux-gnu/*` and `/usr/lib/lib/include`
+  to the real locations. Needed again if this NUC's `libapriltag-dev` is
+  ever reinstalled.
+
+Pending / resume here tomorrow:
+- **Motor driver (Waveshare bus servo adapter) still not confirmed on the NUC.**
+  Root-caused to a bad USB cable (confirmed on a laptop test: nothing enumerated
+  at all with the original cable; swapping to a known-good data cable made it
+  show up instantly as `/dev/ttyACM0`, `1a86:55d3`). Needs a new USB-C cable.
+- **ESP32 was unplugged/lost connection** during testing -- recheck
+  `/dev/serial/by-id/` once physically reconnected.
+- Once both serial devices are confirmed on the NUC: fill in
+  `robot.serial_port` in the sample config (currently a placeholder), re-run
+  `setup_scripts/camera_stream.py --tags` to confirm all 6 AprilTags detect
+  reliably now that fullscreen is fixed (last check before disconnecting
+  showed 3/6 and flaky, but that was pre-fullscreen-fix and not re-verified),
+  then run `agent_random_real.json` for the full physical-loop sanity check.
+- usbip export to the GPU box (Part 4 below) not started yet.
+
 ## Architecture
 
 ```
