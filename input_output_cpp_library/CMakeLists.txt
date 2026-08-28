@@ -77,7 +77,7 @@ target_link_libraries(robotroller PRIVATE ${SCSERVO_TARGET})
 
 # Install the Python module to the active Python environment
 execute_process(
-    COMMAND python -c "import site; print(site.getsitepackages()[0])"
+    COMMAND python3 -c "import site; print(site.getsitepackages()[0])"
     OUTPUT_VARIABLE PYTHON_SITE_PACKAGES
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
